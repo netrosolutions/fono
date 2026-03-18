@@ -6,62 +6,79 @@ on:
   pull_request:
     branches: [main, next]
 
+# Opt into Node.js 24 for all action runners now, before it becomes mandatory
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
+  # ── Typecheck & Build ────────────────────────────────────────────────────────
   ci:
-    name: Typecheck & Build
+    name: Typecheck & Build (${{ matrix.node-version }})
     runs-on: ubuntu-latest
 
     strategy:
+      # Let all Node versions run — don't cancel everything if one fails
+      fail-fast: false
       matrix:
-        node-version: [18.x, 20.x, 22.x, 23.x, 24.x]
+        node-version: [18.x, 20.x, 22.x, 24.x]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
+          # Only cache if a lockfile exists — avoids cache-miss errors on fresh clones
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
+      # Use `npm install` (not `npm ci`) so the workflow works even when
+      # package-lock.json has not been committed yet (e.g. first push after
+      # adding the root package.json). Once you commit the lockfile, both
+      # commands work — but `npm install` is safely idempotent either way.
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
-      - name: Typecheck (fono)
+      - name: Typecheck — fono
         run: npm run typecheck --workspace=packages/fono
 
-      - name: Build (fono)
+      - name: Build — fono
         run: npm run build --workspace=packages/fono
 
-      - name: Typecheck (create-fono)
+      - name: Typecheck — create-fono
         run: npm run typecheck --workspace=packages/create-fono
 
-      - name: Build (create-fono)
+      - name: Build — create-fono
         run: npm run build --workspace=packages/create-fono
 
-  # Scaffold smoke test: run create-fono in CI mode, verify files exist
+  # ── Scaffold smoke test ──────────────────────────────────────────────────────
+  # Runs only on Node 22 (LTS) after the build matrix passes.
+  # Tests both templates and validates the generated file contents.
   scaffold-test:
-    name: Scaffold smoke test
+    name: Scaffold (${{ matrix.template }})
     runs-on: ubuntu-latest
     needs: ci
 
     strategy:
+      fail-fast: false
       matrix:
         template: [minimal, full]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
-          cache: npm
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
 
-      - name: Install & build packages
-        run: npm ci && npm run build
+      - name: Install & build
+        run: npm install && npm run build
 
-      - name: Scaffold ${{ matrix.template }} template
+      - name: Scaffold — ${{ matrix.template }} template (node runtime)
         run: |
           node packages/create-fono/dist/index.js test-app \
             --ci \
@@ -71,43 +88,82 @@ jobs:
             --no-install \
             --no-git
 
-      - name: Verify common scaffold files
+      # ── File existence checks ──────────────────────────────────────────────
+      - name: Verify common files
         run: |
-          test -f test-app/server.ts        && echo "✓ server.ts"
-          test -f test-app/client.ts        && echo "✓ client.ts"
-          test -f test-app/tsconfig.json    && echo "✓ tsconfig.json"
-          test -f test-app/vite.config.ts   && echo "✓ vite.config.ts"
-          test -f test-app/package.json     && echo "✓ package.json"
-          test -f test-app/app/layouts.tsx  && echo "✓ app/layouts.tsx"
-          test -f test-app/app/routes/home.tsx  && echo "✓ app/routes/home.tsx"
-          test -f test-app/app/routes/about.tsx && echo "✓ app/routes/about.tsx"
-          test -f test-app/app/routes/api.ts    && echo "✓ app/routes/api.ts"
+          files=(
+            server.ts client.ts tsconfig.json vite.config.ts package.json
+            .gitignore .env.example README.md public/style.css
+            app/layouts.tsx app/routes/home.tsx
+            app/routes/about.tsx app/routes/api.ts
+          )
+          for f in "${files[@]}"; do
+            if [ -f "test-app/$f" ]; then echo "  ok $f"
+            else echo "  MISSING: $f" && exit 1; fi
+          done
 
       - name: Verify full template extras
         if: matrix.template == 'full'
         run: |
-          test -f test-app/app/store.ts                         && echo "✓ store.ts"
-          test -f test-app/app/routes/counter.tsx               && echo "✓ counter.tsx"
-          test -f test-app/app/routes/posts/index.tsx           && echo "✓ posts/index.tsx"
-          test -f "test-app/app/routes/posts/[slug].tsx"        && echo "✓ posts/[slug].tsx"
+          files=(
+            app/store.ts
+            app/routes/counter.tsx
+            app/routes/posts/index.tsx
+            "app/routes/posts/[slug].tsx"
+          )
+          for f in "${files[@]}"; do
+            if [ -f "test-app/$f" ]; then echo "  ok $f"
+            else echo "  MISSING: $f" && exit 1; fi
+          done
 
-      - name: Verify tsconfig in scaffolded app
+      # ── Content validation ─────────────────────────────────────────────────
+      - name: Validate tsconfig.json
         run: |
-          node -e "
-            const t = JSON.parse(require('fs').readFileSync('test-app/tsconfig.json','utf8'))
-            const co = t.compilerOptions
-            if (co.jsxImportSource !== 'hono/jsx') throw new Error('jsxImportSource wrong: ' + co.jsxImportSource)
-            if (!co.strict) throw new Error('strict not enabled')
-            if (!co.allowImportingTsExtensions) throw new Error('allowImportingTsExtensions missing')
-            console.log('tsconfig valid ✓')
-          "
+          node --input-type=module << 'EOF'
+          import { readFileSync } from 'node:fs'
+          const co = JSON.parse(readFileSync('test-app/tsconfig.json','utf8')).compilerOptions
+          const checks = {
+            'jsxImportSource === hono/jsx': co.jsxImportSource === 'hono/jsx',
+            'strict':                       co.strict === true,
+            'allowImportingTsExtensions':   co.allowImportingTsExtensions === true,
+            'verbatimModuleSyntax':         co.verbatimModuleSyntax === true,
+            'moduleResolution bundler':     co.moduleResolution === 'bundler',
+            'noEmit':                       co.noEmit === true,
+          }
+          let ok = true
+          for (const [k,v] of Object.entries(checks)) {
+            console.log(v ? `  ok ${k}` : `  FAIL ${k}`)
+            if (!v) ok = false
+          }
+          if (!ok) process.exit(1)
+          EOF
 
-      - name: Verify package.json in scaffolded app
+      - name: Validate package.json
         run: |
-          node -e "
-            const p = JSON.parse(require('fs').readFileSync('test-app/package.json','utf8'))
-            if (!p.dependencies['@mdakashdeveloper/fono']) throw new Error('fono dep missing')
-            if (!p.scripts.build) throw new Error('build script missing')
-            if (!p.scripts.typecheck) throw new Error('typecheck script missing')
-            console.log('package.json valid ✓')
-          "
+          node --input-type=module << 'EOF'
+          import { readFileSync } from 'node:fs'
+          const p = JSON.parse(readFileSync('test-app/package.json','utf8'))
+          const checks = {
+            'fono dep':          !!p.dependencies?.['@mdakashdeveloper/fono'],
+            'hono dep':          !!p.dependencies?.hono,
+            'type module':       p.type === 'module',
+            'build script':      !!p.scripts?.build,
+            'typecheck script':  !!p.scripts?.typecheck,
+            'start or dev':      !!(p.scripts?.start || p.scripts?.dev),
+          }
+          let ok = true
+          for (const [k,v] of Object.entries(checks)) {
+            console.log(v ? `  ok ${k}` : `  FAIL ${k}`)
+            if (!v) ok = false
+          }
+          if (!ok) process.exit(1)
+          EOF
+
+      - name: Validate package imports
+        run: |
+          grep -q "@mdakashdeveloper/fono" test-app/server.ts \
+            && echo "  ok server.ts imports fono" \
+            || (echo "  FAIL server.ts missing fono import" && exit 1)
+          grep -q "fonoVitePlugin" test-app/vite.config.ts \
+            && echo "  ok vite.config.ts uses fonoVitePlugin" \
+            || (echo "  FAIL vite.config.ts missing fonoVitePlugin" && exit 1)

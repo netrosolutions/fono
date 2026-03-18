@@ -6,6 +6,10 @@ on:
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
+# Opt into Node.js 24 for all action runners
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   release:
     name: Release
@@ -17,29 +21,34 @@ jobs:
       id-token: write        # npm provenance attestation
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (full history for Changesets)
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0     # full history required by Changesets
+          fetch-depth: 0
 
-      - name: Setup Node
+      - name: Setup Node 22 (LTS)
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
-          cache: npm
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build all packages
         run: npm run build
 
-      - name: Create Release Pull Request or Publish to npm
+      # Changesets will either:
+      #   a) Open / update a "Version Packages" PR (when .changeset files exist)
+      #   b) Publish to npm (when merging that PR into main)
+      - name: Publish or open version PR
         uses: changesets/action@v1
         with:
           publish: npm run release
           title: "chore: release packages"
           commit: "chore: release packages"
+          createGithubReleases: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
