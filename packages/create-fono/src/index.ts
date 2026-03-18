@@ -18,7 +18,7 @@ const CFG = {
   FONO_PKG: '@mdakashdeveloper/fono',
 
   /** Scaffolded app's default fono dependency version */
-  FONO_VERSION: '^0.1.1',
+  FONO_VERSION: '^0.1.2',
 
   /** Hono peer dep version used in scaffolded apps */
   HONO_VERSION: '^4.12.8',

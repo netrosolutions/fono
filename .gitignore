@@ -16,6 +16,7 @@ logs
 .fleet
 .idea
 GITHUB_SETUP.md
+test-app
 
 # Local env files
 .env
