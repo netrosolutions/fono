@@ -3,15 +3,51 @@
 //  create-fono · Interactive project scaffolding CLI
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { existsSync, mkdirSync, writeFileSync, cpSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 import prompts from 'prompts'
-import {
-  bold, cyan, green, red, yellow, dim, magenta, reset,
-} from 'kolorist'
+import { bold, cyan, green, red, yellow, dim, magenta } from 'kolorist'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 0  Top-level configuration — edit here when versions or names change
+// ══════════════════════════════════════════════════════════════════════════════
+
+const CFG = {
+  /** npm package name for the framework */
+  FONO_PKG: '@mdakashdeveloper/fono',
+
+  /** Scaffolded app's default fono dependency version */
+  FONO_VERSION: '^0.1.1',
+
+  /** Hono peer dep version used in scaffolded apps */
+  HONO_VERSION: '^4.12.8',
+
+  /** Vite version used in scaffolded apps */
+  VITE_VERSION: '^8.0.0',
+
+  /** TypeScript version used in scaffolded apps */
+  TS_VERSION: '^5.9.3',
+
+  /** @hono/node-server version for Node runtime */
+  HONO_NODE_VERSION: '^1.19.11',
+
+  /** Wrangler version for Cloudflare runtime */
+  WRANGLER_VERSION: '^3.0.0',
+
+  /** Docs / repo URL shown in CLI output and generated READMEs */
+  DOCS_URL: 'https://github.com/mdakashdeveloper/fono',
+
+  /** Default port written into generated server entries */
+  DEFAULT_PORT: 3000,
+
+  /** Git commit message used when --git-init is chosen */
+  GIT_INIT_COMMIT: 'chore: initial fono scaffold',
+} as const
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 1  Types
+// ══════════════════════════════════════════════════════════════════════════════
 
 type Runtime  = 'node' | 'bun' | 'deno' | 'cloudflare' | 'generic'
 type PkgMgr   = 'npm' | 'pnpm' | 'bun' | 'yarn' | 'deno'
@@ -26,16 +62,16 @@ interface Answers {
   installDeps: boolean
 }
 
-// ── Banner ────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 2  Utilities
+// ══════════════════════════════════════════════════════════════════════════════
 
-function banner() {
+function banner(): void {
   console.log()
   console.log(bold(cyan('  ⬡  Fono')))
   console.log(dim('  Full-stack Hono framework — SSR + SPA + Reactivity'))
   console.log()
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function validateName(name: string): string | true {
   if (!name.trim()) return 'Project name is required'
@@ -43,23 +79,33 @@ function validateName(name: string): string | true {
   return true
 }
 
-function isEmpty(dir: string): boolean {
+function isDirEmpty(dir: string): boolean {
   if (!existsSync(dir)) return true
   let items: string[] = []
-  try { items = readdirSync(dir) as string[] } catch { return true }
+  try { items = readdirSync(dir) } catch { return true }
   return items.length === 0 || (items.length === 1 && items[0] === '.git')
 }
 
-function write(filePath: string, content: string) {
+/** Write a file, creating all parent directories as needed. */
+function writeFile(filePath: string, content: string): void {
   const dir = filePath.substring(0, filePath.lastIndexOf('/'))
   if (dir) mkdirSync(dir, { recursive: true })
   writeFileSync(filePath, content, 'utf-8')
 }
 
-// ── Runtime-specific files ────────────────────────────────────────────────────
+/** Build a package sub-path: pkg('server') → '@mdakashdeveloper/fono/server' */
+function pkg(subpath?: string): string {
+  return subpath ? `${CFG.FONO_PKG}/${subpath}` : CFG.FONO_PKG
+}
 
-function serverEntry(runtime: Runtime, pkg: string): string {
-  const common = `import { createFono } from 'fono/server'
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 3  Template generators — TypeScript source strings
+// ══════════════════════════════════════════════════════════════════════════════
+
+function genServerEntry(runtime: Runtime): string {
+  const port = CFG.DEFAULT_PORT
+
+  const shared = `import { createFono } from '${pkg('server')}'
 import { RootLayout } from './app/layouts'
 import home from './app/routes/home'
 import about from './app/routes/about'
@@ -70,55 +116,24 @@ const fono = createFono({
   routes: [apiRoutes, home, about],
 })
 
-// Access the raw Hono app for custom middleware / error handling
 fono.app.onError((err, c) => {
   console.error(err)
   return c.json({ error: err.message }, 500)
 })`
 
-  if (runtime === 'node') {
-    return `${common}
-
-import { serve } from 'fono/server'
-await serve({ app: fono, port: 3000 })
-`
+  const serveLines: Record<Runtime, string> = {
+    node:       `\nimport { serve } from '${pkg('server')}'\nawait serve({ app: fono, port: ${port} })\n`,
+    bun:        `\nimport { serve } from '${pkg('server')}'\nawait serve({ app: fono, port: ${port}, runtime: 'bun' })\n`,
+    deno:       `\nimport { serve } from '${pkg('server')}'\nawait serve({ app: fono, port: ${port}, runtime: 'deno' })\n`,
+    cloudflare: `\n// Cloudflare Workers — export the fetch handler\nexport default { fetch: fono.handler }\n`,
+    generic:    `\n// WinterCG-compatible — export the fetch handler\nexport default { fetch: fono.handler }\nexport const handler = fono.handler\n`,
   }
 
-  if (runtime === 'bun') {
-    return `${common}
-
-import { serve } from 'fono/server'
-await serve({ app: fono, port: 3000, runtime: 'bun' })
-`
-  }
-
-  if (runtime === 'deno') {
-    return `${common}
-
-import { serve } from 'fono/server'
-await serve({ app: fono, port: 3000, runtime: 'deno' })
-`
-  }
-
-  if (runtime === 'cloudflare') {
-    return `${common}
-
-// Cloudflare Workers: export the fetch handler
-export default { fetch: fono.handler }
-`
-  }
-
-  // generic
-  return `${common}
-
-// Export the fetch handler — works on any WinterCG-compatible runtime
-export default { fetch: fono.handler }
-export const handler = fono.handler
-`
+  return shared + serveLines[runtime]
 }
 
-function clientEntry(): string {
-  return `import { boot } from 'fono/client'
+function genClientEntry(): string {
+  return `import { boot } from '${pkg('client')}'
 import { RootLayout } from './app/layouts'
 import home from './app/routes/home'
 import about from './app/routes/about'
@@ -131,9 +146,8 @@ boot({
 `
 }
 
-function rootLayout(): string {
-  return `import { defineLayout, use } from 'fono/core'
-import { ref } from 'fono/core'
+function genRootLayout(): string {
+  return `import { defineLayout, use, ref } from '${pkg('core')}'
 
 const menuOpen = ref(false)
 
@@ -148,7 +162,7 @@ export const RootLayout = defineLayout(function Layout({ children, url }) {
           <a href="/" class={\`nav-link\${url === '/' ? ' active' : ''}\`}>Home</a>
           <a href="/about" class={\`nav-link\${url === '/about' ? ' active' : ''}\`}>About</a>
         </div>
-        <button class="burger" onClick={() => (menuOpen.value = !open)}>
+        <button class="burger" onClick={() => { menuOpen.value = !open }}>
           {open ? '✕' : '☰'}
         </button>
       </nav>
@@ -160,8 +174,8 @@ export const RootLayout = defineLayout(function Layout({ children, url }) {
 `
 }
 
-function homeRoute(): string {
-  return `import { definePage } from 'fono/core'
+function genHomeRoute(): string {
+  return `import { definePage } from '${pkg('core')}'
 
 export default definePage({
   path: '/',
@@ -182,8 +196,8 @@ export default definePage({
 `
 }
 
-function aboutRoute(): string {
-  return `import { definePage } from 'fono/core'
+function genAboutRoute(): string {
+  return `import { definePage } from '${pkg('core')}'
 
 export default definePage({
   path: '/about',
@@ -201,8 +215,8 @@ export default definePage({
 `
 }
 
-function apiRoute(): string {
-  return `import { defineApiRoute } from 'fono/core'
+function genApiRoute(): string {
+  return `import { defineApiRoute } from '${pkg('core')}'
 
 export const apiRoutes = defineApiRoute('/api', (app) => {
   app.get('/health', (c) => c.json({ status: 'ok', ts: Date.now() }))
@@ -215,7 +229,7 @@ export const apiRoutes = defineApiRoute('/api', (app) => {
 `
 }
 
-function appCss(): string {
+function genAppCss(): string {
   return `*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: system-ui, sans-serif; background: #0d0f14; color: #e8eaf2; line-height: 1.6; }
 .app { display: flex; flex-direction: column; min-height: 100vh; }
@@ -233,133 +247,114 @@ code { background: #1d2130; padding: .1rem .4rem; border-radius: 4px; font-famil
 `
 }
 
-function viteConfig(runtime: Runtime): string {
+function genViteConfig(runtime: Runtime): string {
   const isEdge = runtime === 'cloudflare' || runtime === 'generic'
-
-  if (isEdge) {
-    return `import { fonoVitePlugin } from 'fono/vite'
-
-export default {
-  plugins: [
-    fonoVitePlugin({
-      serverEntry: 'server.ts',
-      clientEntry:  'client.ts',
-      serverExternal: [],
-    }),
-  ],
-}
-`
-  }
-
-  return `import { fonoVitePlugin } from 'fono/vite'
+  const extras = isEdge ? `\n      serverExternal: [],` : ''
+  return `import { fonoVitePlugin } from '${pkg('vite')}'
 
 export default {
   plugins: [
     fonoVitePlugin({
       serverEntry: 'server.ts',
-      clientEntry:  'client.ts',
+      clientEntry:  'client.ts',${extras}
     }),
   ],
 }
 `
 }
 
-function packageJson(name: string, runtime: Runtime): string {
+function genPackageJson(name: string, runtime: Runtime): string {
   const scripts: Record<string, string> = {
-    build: 'vite build',
-    start: 'node dist/server/server.js',
+    build:     'vite build',
     typecheck: 'tsc --noEmit',
   }
 
   if (runtime === 'bun') {
     scripts.start = 'bun dist/server/server.js'
-    scripts.dev = 'bun --watch dist/server/server.js'
+    scripts.dev   = 'bun --watch dist/server/server.js'
   } else if (runtime === 'deno') {
     scripts.start = 'deno run -A dist/server/server.js'
-    scripts.dev = 'deno run --watch -A dist/server/server.js'
+    scripts.dev   = 'deno run --watch -A dist/server/server.js'
   } else if (runtime === 'cloudflare') {
-    scripts.start = 'wrangler dev'
+    scripts.dev    = 'wrangler dev'
     scripts.deploy = 'wrangler deploy'
-    delete scripts.start
   } else {
-    scripts.dev = 'node --watch dist/server/server.js'
+    scripts.start = 'node dist/server/server.js'
+    scripts.dev   = 'node --watch dist/server/server.js'
   }
 
-  const deps: Record<string, string> = { fono: '^0.1.0', hono: '^4.12.0' }
-
-  const devDeps: Record<string, string> = {
-    vite: '^6.0.0',
-    typescript: '^5.8.0',
+  const dependencies: Record<string, string> = {
+    [CFG.FONO_PKG]: CFG.FONO_VERSION,
+    hono:           CFG.HONO_VERSION,
   }
 
-  if (runtime === 'node') devDeps['@hono/node-server'] = '^1.14.0'
-  if (runtime === 'cloudflare') devDeps['wrangler'] = '^3.0.0'
+  const devDependencies: Record<string, string> = {
+    vite:       CFG.VITE_VERSION,
+    typescript: CFG.TS_VERSION,
+  }
 
-  return JSON.stringify({
-    name,
-    version: '0.0.1',
-    type: 'module',
-    private: true,
-    scripts,
-    dependencies: deps,
-    devDependencies: devDeps,
-  }, null, 2) + '\n'
+  if (runtime === 'node')       devDependencies['@hono/node-server'] = CFG.HONO_NODE_VERSION
+  if (runtime === 'cloudflare') devDependencies['wrangler']           = CFG.WRANGLER_VERSION
+
+  return JSON.stringify(
+    { name, version: '0.0.1', type: 'module', private: true, scripts, dependencies, devDependencies },
+    null, 2
+  ) + '\n'
 }
 
-function tsconfig(): string {
-  return JSON.stringify({
-    compilerOptions: {
-      target: 'ESNext',
-      module: 'ESNext',
-      moduleResolution: 'bundler',
-      lib: ['ESNext', 'DOM'],
-      jsx: 'react-jsx',
-      jsxImportSource: 'hono/jsx',
-      strict: true,
-      skipLibCheck: true,
-      noEmit: true,
-      allowImportingTsExtensions: true,
+function genTsConfig(): string {
+  return JSON.stringify(
+    {
+      compilerOptions: {
+        target:                     'ESNext',
+        module:                     'ESNext',
+        moduleResolution:           'bundler',
+        lib:                        ['ESNext', 'DOM'],
+        jsx:                        'react-jsx',
+        jsxImportSource:            'hono/jsx',
+        strict:                     true,
+        skipLibCheck:               true,
+        noEmit:                     true,
+        allowImportingTsExtensions: true,
+        resolveJsonModule:          true,
+        isolatedModules:            true,
+        verbatimModuleSyntax:       true,
+      },
+      include: ['**/*.ts', '**/*.tsx'],
+      exclude: ['node_modules', 'dist'],
     },
-    include: ['**/*.ts', '**/*.tsx'],
-    exclude: ['node_modules', 'dist'],
-  }, null, 2) + '\n'
+    null, 2
+  ) + '\n'
 }
 
-function gitignore(): string {
-  return `node_modules
-dist
-.env
-.env.local
-*.local
-.DS_Store
-Thumbs.db
-`
+function genGitignore(): string {
+  return ['node_modules', 'dist', '.env', '.env.local', '*.local', '.DS_Store', 'Thumbs.db', ''].join('\n')
 }
 
-function envExample(): string {
-  return `# Copy this to .env and fill in your values
-PORT=3000
-NODE_ENV=development
-`
+function genEnvExample(): string {
+  return `# Copy this to .env and fill in your values\nPORT=${CFG.DEFAULT_PORT}\nNODE_ENV=development\n`
 }
 
-function denoJson(name: string): string {
-  return JSON.stringify({
-    name,
-    version: '0.0.1',
-    tasks: {
-      build: 'vite build',
-      start: 'deno run -A dist/server/server.js',
-      dev: 'deno run --watch -A dist/server/server.js',
+function genDenoJson(name: string): string {
+  return JSON.stringify(
+    {
+      name,
+      version: '0.0.1',
+      tasks: {
+        build: 'vite build',
+        start: 'deno run -A dist/server/server.js',
+        dev:   'deno run --watch -A dist/server/server.js',
+      },
+      imports: {
+        [CFG.FONO_PKG]: `npm:${CFG.FONO_PKG}@${CFG.FONO_VERSION}`,
+        hono:            `npm:hono@${CFG.HONO_VERSION}`,
+      },
     },
-    imports: {
-      fono: 'npm:fono@^0.1.0',
-      hono: 'npm:hono@^4.12.0',
-    },
-  }, null, 2) + '\n'
+    null, 2
+  ) + '\n'
 }
 
-function wranglerToml(name: string): string {
+function genWranglerToml(name: string): string {
   return `name = "${name}"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -374,69 +369,44 @@ globs = ["**/*.js"]
 `
 }
 
-// ── Scaffold ──────────────────────────────────────────────────────────────────
+// ── Full template extras ──────────────────────────────────────────────────────
 
-function scaffold(dir: string, answers: Answers) {
-  const { runtime, template } = answers
-
-  // Directory structure
-  mkdirSync(join(dir, 'app/routes'), { recursive: true })
-  mkdirSync(join(dir, 'app/components'), { recursive: true })
-  mkdirSync(join(dir, 'public'), { recursive: true })
-
-  // Root files
-  write(join(dir, 'package.json'),   packageJson(answers.projectName, runtime))
-  write(join(dir, 'tsconfig.json'),  tsconfig())
-  write(join(dir, 'vite.config.ts'), viteConfig(runtime))
-  write(join(dir, '.gitignore'),     gitignore())
-  write(join(dir, '.env.example'),   envExample())
-  write(join(dir, 'server.ts'),      serverEntry(runtime, answers.projectName))
-  write(join(dir, 'client.ts'),      clientEntry())
-
-  // Runtime-specific
-  if (runtime === 'deno') {
-    write(join(dir, 'deno.json'), denoJson(answers.projectName))
-  }
-  if (runtime === 'cloudflare') {
-    write(join(dir, 'wrangler.toml'), wranglerToml(answers.projectName))
-  }
-
-  // App files
-  write(join(dir, 'app/layouts.tsx'),      rootLayout())
-  write(join(dir, 'app/routes/home.tsx'),  homeRoute())
-  write(join(dir, 'app/routes/about.tsx'), aboutRoute())
-  write(join(dir, 'app/routes/api.ts'),    apiRoute())
-  write(join(dir, 'public/style.css'),     appCss())
-
-  // Full template — extra demo pages
-  if (template === 'full') {
-    write(join(dir, 'app/store.ts'), storeFile())
-    write(join(dir, 'app/routes/counter.tsx'), counterRoute())
-    write(join(dir, 'app/routes/posts/index.tsx'), postsIndexRoute())
-    write(join(dir, 'app/routes/posts/[slug].tsx'), postDetailRoute())
-  }
-
-  // README
-  write(join(dir, 'README.md'), projectReadme(answers))
-}
-
-// ── Extra full-template files ─────────────────────────────────────────────────
-
-function storeFile(): string {
-  return `import { ref, reactive, computed } from 'fono/core'
+function genStore(): string {
+  return `import { ref, reactive, computed } from '${pkg('core')}'
 
 export const theme = ref<'dark' | 'light'>('dark')
-export const toggleTheme = () => { theme.value = theme.value === 'dark' ? 'light' : 'dark' }
+export const toggleTheme = (): void => {
+  theme.value = theme.value === 'dark' ? 'light' : 'dark'
+}
 
-export const cart = reactive<{ items: { id: string; name: string; qty: number; price: number }[] }>({ items: [] })
+export interface CartItem {
+  id: string
+  name: string
+  qty: number
+  price: number
+}
+
+export const cart      = reactive<{ items: CartItem[] }>({ items: [] })
 export const cartCount = computed(() => cart.items.reduce((s, i) => s + i.qty, 0))
+export const cartTotal = computed(() => cart.items.reduce((s, i) => s + i.qty * i.price, 0))
+
+export function addToCart(item: Omit<CartItem, 'qty'>): void {
+  const existing = cart.items.find((i) => i.id === item.id)
+  if (existing) { existing.qty++; return }
+  cart.items.push({ ...item, qty: 1 })
+}
+
+export function removeFromCart(id: string): void {
+  cart.items = cart.items.filter((i) => i.id !== id)
+}
 `
 }
 
-function counterRoute(): string {
-  return `import { definePage, ref, computed, use } from 'fono/core'
+function genCounterRoute(): string {
+  return `import { definePage, ref, computed, use } from '${pkg('core')}'
 
-const count = ref(0)
+// Module-level — value persists across SPA navigations
+const count   = ref(0)
 const doubled = computed(() => count.value * 2)
 
 export default definePage({
@@ -445,18 +415,19 @@ export default definePage({
   Page() {
     const n = use(count)
     const d = use(doubled)
+
     return (
       <div class="page">
         <h1>Counter — {n}</h1>
-        <p>Doubled: {d}</p>
-        <p>
-          <button onClick={() => count.value--}>−</button>
-          {' '}
-          <button onClick={() => count.value++}>+</button>
-          {' '}
-          <button onClick={() => (count.value = 0)}>reset</button>
+        <p>Doubled (computed): {d}</p>
+        <div style="display:flex;gap:.5rem;margin-top:1rem">
+          <button onClick={() => { count.value-- }}>−</button>
+          <button onClick={() => { count.value++ }}>+</button>
+          <button onClick={() => { count.value = 0 }}>reset</button>
+        </div>
+        <p style="margin-top:1rem;color:#7b829a;font-size:.875rem">
+          Navigate away and back — the count persists.
         </p>
-        <p>Navigate away and back — the count persists.</p>
       </div>
     )
   },
@@ -464,26 +435,32 @@ export default definePage({
 `
 }
 
-function postsIndexRoute(): string {
-  return `import { definePage } from 'fono/core'
+function genPostsIndexRoute(): string {
+  return `import { definePage } from '${pkg('core')}'
 
-const POSTS = [
-  { slug: 'hello-fono', title: 'Hello Fono', date: '2025-01-01' },
-  { slug: 'signals', title: 'How signals work', date: '2025-01-08' },
+interface PostSummary {
+  slug: string
+  title: string
+  date: string
+}
+
+const POSTS: PostSummary[] = [
+  { slug: 'hello-fono', title: 'Hello Fono',       date: '2025-01-01' },
+  { slug: 'signals',    title: 'How signals work',  date: '2025-01-08' },
 ]
 
 export default definePage({
   path: '/posts',
-  loader: async () => ({ posts: POSTS }),
+  loader: async (): Promise<{ posts: PostSummary[] }> => ({ posts: POSTS }),
   Page({ posts }) {
     return (
       <div class="page">
         <h1>Posts</h1>
-        <ul>
-          {posts.map(p => (
+        <ul style="list-style:none;display:flex;flex-direction:column;gap:.5rem;margin-top:1rem">
+          {posts.map((p) => (
             <li key={p.slug}>
               <a href={\`/posts/\${p.slug}\`}>{p.title}</a>
-              <span> — {p.date}</span>
+              <span style="color:#7b829a;font-size:.85rem"> — {p.date}</span>
             </li>
           ))}
         </ul>
@@ -494,27 +471,45 @@ export default definePage({
 `
 }
 
-function postDetailRoute(): string {
-  return `import { definePage } from 'fono/core'
+function genPostDetailRoute(): string {
+  return `import { definePage } from '${pkg('core')}'
 
-const POSTS: Record<string, { title: string; body: string }> = {
-  'hello-fono': { title: 'Hello Fono', body: 'Fono is a full-stack framework built on Hono.' },
-  'signals': { title: 'How signals work', body: 'Signals are reactive values that notify subscribers on change.' },
+interface Post {
+  title: string
+  body: string
 }
 
-export default definePage<{ post: { title: string; body: string } | null }>({
-  path: '/posts/[slug]',
-  loader: (c) => {
-    const slug = (c.req as any).param('slug')
-    return { post: POSTS[slug] ?? null }
+const POSTS: Record<string, Post> = {
+  'hello-fono': {
+    title: 'Hello Fono',
+    body:  'Fono is a full-stack framework built on Hono — SSR, SPA, and Vue-like signals in 3 files.',
   },
-  Page({ post }) {
-    if (!post) return <div class="page"><h1>Not found</h1><a href="/posts">← Posts</a></div>
+  signals: {
+    title: 'How signals work',
+    body:  'Signals are reactive values that notify only the components subscribed to them — no virtual DOM diffing needed.',
+  },
+}
+
+export default definePage<{ post: Post | null; slug: string }>({
+  path: '/posts/[slug]',
+  loader: (c): { post: Post | null; slug: string } => {
+    const slug = (c.req as any).param('slug') as string
+    return { post: POSTS[slug] ?? null, slug }
+  },
+  Page({ post, slug }) {
+    if (!post) {
+      return (
+        <div class="page">
+          <h1>Post not found: {slug}</h1>
+          <a href="/posts">← Posts</a>
+        </div>
+      )
+    }
     return (
       <article class="page">
         <a href="/posts">← Posts</a>
-        <h1>{post.title}</h1>
-        <p>{post.body}</p>
+        <h1 style="margin-top:.75rem">{post.title}</h1>
+        <p style="margin-top:1rem;line-height:1.8">{post.body}</p>
       </article>
     )
   },
@@ -522,201 +517,276 @@ export default definePage<{ post: { title: string; body: string } | null }>({
 `
 }
 
-function projectReadme(a: Answers): string {
-  const install: Record<PkgMgr, string> = {
-    npm: 'npm install',
-    pnpm: 'pnpm install',
-    bun: 'bun install',
-    yarn: 'yarn',
-    deno: 'deno install',
+function genProjectReadme(a: Answers): string {
+  const cmds: Record<PkgMgr, { install: string; build: string; start: string }> = {
+    npm:  { install: 'npm install',   build: 'npm run build',    start: 'npm start' },
+    pnpm: { install: 'pnpm install',  build: 'pnpm build',       start: 'pnpm start' },
+    bun:  { install: 'bun install',   build: 'bun run build',    start: 'bun start' },
+    yarn: { install: 'yarn',          build: 'yarn build',       start: 'yarn start' },
+    deno: { install: 'deno install',  build: 'deno task build',  start: 'deno task start' },
   }
-  const build: Record<PkgMgr, string> = {
-    npm: 'npm run build',
-    pnpm: 'pnpm build',
-    bun: 'bun run build',
-    yarn: 'yarn build',
-    deno: 'deno task build',
-  }
-  const start: Record<PkgMgr, string> = {
-    npm: 'npm start',
-    pnpm: 'pnpm start',
-    bun: 'bun start',
-    yarn: 'yarn start',
-    deno: 'deno task start',
-  }
+  const { install, build, start } = cmds[a.pkgManager]
 
   return `# ${a.projectName}
 
-A [Fono](https://github.com/your-org/fono) app — SSR + SPA, Vue-like reactivity, built on [Hono](https://hono.dev).
+A [Fono](${CFG.DOCS_URL}) app — SSR + SPA + Vue-like reactivity on [Hono](https://hono.dev).
 
-## Setup
+## Getting started
 
 \`\`\`bash
-${install[a.pkgManager]}
-${build[a.pkgManager]}
-${start[a.pkgManager]}
+${install}
+${build}
+${start}
 \`\`\`
 
-## Structure
+## Project structure
 
 \`\`\`
-server.ts          # Server entry — createFono() + serve()
-client.ts          # Client entry — boot()
+server.ts            # Server entry — createFono() + serve()
+client.ts            # Client entry — boot()
 app/
-  layouts.tsx      # Root layout (nav, footer)
+  layouts.tsx        # Root layout (nav, footer)
   routes/
-    home.tsx       # GET /
-    about.tsx      # GET /about
-    api.ts         # GET /api/health, GET /api/hello
+    home.tsx         # GET /
+    about.tsx        # GET /about
+    api.ts           # GET /api/health, GET /api/hello
+public/
+  style.css
+vite.config.ts
+tsconfig.json
 \`\`\`
 
-## Fono features used
+## Key Fono APIs used
 
-- \`definePage\` — route + SSR loader + Page component in one file
-- \`defineLayout\` — shared nav/footer wrapper
-- \`defineApiRoute\` — raw Hono routes at /api
-- \`ref\` / \`use\` — reactive state that survives SPA navigation
+| API | What it does |
+|---|---|
+| \`definePage\` | Route + SSR loader + Page component in one file |
+| \`defineLayout\` | Shared wrapper (nav, footer) rendered around every page |
+| \`defineApiRoute\` | Raw Hono routes — REST, RPC, WebSocket |
+| \`ref\` / \`use\` | Reactive value that persists across SPA navigations |
 
-## Runtime: ${a.runtime}
+## Runtime
 
-Learn more at [github.com/your-org/fono](https://github.com/your-org/fono).
+**${a.runtime}** — see \`server.ts\` for the serve configuration.
+
+## Learn more
+
+- Docs: ${CFG.DOCS_URL}
+- Hono: https://hono.dev
 `
 }
 
-// ── Install deps ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 4  Scaffold — write all files to disk
+// ══════════════════════════════════════════════════════════════════════════════
 
-function installCmds(mgr: PkgMgr, dir: string): void {
-  const cmd: Record<PkgMgr, string> = {
-    npm: 'npm install',
-    pnpm: 'pnpm install',
-    bun: 'bun install',
-    yarn: 'yarn',
-    deno: 'deno install',
+function scaffold(dir: string, answers: Answers): void {
+  const { runtime, template } = answers
+
+  // Core directories
+  mkdirSync(join(dir, 'app/routes'), { recursive: true })
+  mkdirSync(join(dir, 'app/components'), { recursive: true })
+  mkdirSync(join(dir, 'public'), { recursive: true })
+
+  // Root config files
+  writeFile(join(dir, 'package.json'),   genPackageJson(answers.projectName, runtime))
+  writeFile(join(dir, 'tsconfig.json'),  genTsConfig())
+  writeFile(join(dir, 'vite.config.ts'), genViteConfig(runtime))
+  writeFile(join(dir, '.gitignore'),     genGitignore())
+  writeFile(join(dir, '.env.example'),   genEnvExample())
+
+  // Runtime-specific config files
+  if (runtime === 'deno')       writeFile(join(dir, 'deno.json'),     genDenoJson(answers.projectName))
+  if (runtime === 'cloudflare') writeFile(join(dir, 'wrangler.toml'), genWranglerToml(answers.projectName))
+
+  // App entry points
+  writeFile(join(dir, 'server.ts'), genServerEntry(runtime))
+  writeFile(join(dir, 'client.ts'), genClientEntry())
+
+  // Shared app files
+  writeFile(join(dir, 'app/layouts.tsx'),      genRootLayout())
+  writeFile(join(dir, 'app/routes/home.tsx'),  genHomeRoute())
+  writeFile(join(dir, 'app/routes/about.tsx'), genAboutRoute())
+  writeFile(join(dir, 'app/routes/api.ts'),    genApiRoute())
+  writeFile(join(dir, 'public/style.css'),     genAppCss())
+
+  // Full template extras
+  if (template === 'full') {
+    writeFile(join(dir, 'app/store.ts'),                genStore())
+    writeFile(join(dir, 'app/routes/counter.tsx'),      genCounterRoute())
+    writeFile(join(dir, 'app/routes/posts/index.tsx'),  genPostsIndexRoute())
+    writeFile(join(dir, 'app/routes/posts/[slug].tsx'), genPostDetailRoute())
   }
-  execSync(cmd[mgr], { cwd: dir, stdio: 'inherit' })
+
+  // Project README
+  writeFile(join(dir, 'README.md'), genProjectReadme(answers))
 }
 
-function initGit(dir: string): void {
-  execSync('git init', { cwd: dir, stdio: 'inherit' })
-  execSync('git add -A', { cwd: dir, stdio: 'inherit' })
-  execSync('git commit -m "chore: initial fono scaffold"', { cwd: dir, stdio: 'inherit' })
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 5  Install & git helpers
+// ══════════════════════════════════════════════════════════════════════════════
+
+const INSTALL_CMD: Record<PkgMgr, string> = {
+  npm:  'npm install',
+  pnpm: 'pnpm install',
+  bun:  'bun install',
+  yarn: 'yarn',
+  deno: 'deno install',
 }
 
-// ── Next steps text ───────────────────────────────────────────────────────────
+const BUILD_CMD: Record<PkgMgr, string> = {
+  npm:  'npm run build',
+  pnpm: 'pnpm build',
+  bun:  'bun run build',
+  yarn: 'yarn build',
+  deno: 'deno task build',
+}
 
-function nextSteps(dir: string, answers: Answers): string {
-  const isCurrentDir = dir === '.'
-  const cmds: Record<PkgMgr, { build: string; start: string }> = {
-    npm:  { build: 'npm run build', start: 'npm start' },
-    pnpm: { build: 'pnpm build',    start: 'pnpm start' },
-    bun:  { build: 'bun run build', start: 'bun start' },
-    yarn: { build: 'yarn build',    start: 'yarn start' },
-    deno: { build: 'deno task build', start: 'deno task start' },
-  }
+const START_CMD: Record<PkgMgr, string> = {
+  npm:  'npm start',
+  pnpm: 'pnpm start',
+  bun:  'bun start',
+  yarn: 'yarn start',
+  deno: 'deno task start',
+}
 
-  const { build, start } = cmds[answers.pkgManager]
-  const lines: string[] = ['']
-  if (!isCurrentDir) lines.push(`  ${cyan('cd')} ${answers.projectName}`)
-  if (!answers.installDeps) lines.push(`  ${cyan(build.split(' ')[0])} install`)
-  lines.push(`  ${cyan(build)}`)
-  lines.push(`  ${cyan(start)}`)
+function runInstall(mgr: PkgMgr, dir: string): void {
+  execSync(INSTALL_CMD[mgr], { cwd: dir, stdio: 'inherit' })
+}
+
+function runGitInit(dir: string): void {
+  execSync('git init',                                    { cwd: dir, stdio: 'inherit' })
+  execSync('git add -A',                                  { cwd: dir, stdio: 'inherit' })
+  execSync(`git commit -m "${CFG.GIT_INIT_COMMIT}"`,     { cwd: dir, stdio: 'inherit' })
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 6  Next-steps display
+// ══════════════════════════════════════════════════════════════════════════════
+
+function printNextSteps(projectName: string, answers: Answers): void {
+  const inCurrentDir = projectName === '.'
+  const lines: string[] = ['', '  Next steps:']
+
+  if (!inCurrentDir)          lines.push(`    ${cyan('cd')} ${projectName}`)
+  if (!answers.installDeps)   lines.push(`    ${cyan(INSTALL_CMD[answers.pkgManager])}`)
+  lines.push(`    ${cyan(BUILD_CMD[answers.pkgManager])}`)
+  lines.push(`    ${cyan(START_CMD[answers.pkgManager])}`)
   lines.push('')
-  return lines.join('\n')
+  lines.push(`  Docs: ${cyan(CFG.DOCS_URL)}`)
+  lines.push('')
+
+  console.log(lines.join('\n'))
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 7  Main
+// ══════════════════════════════════════════════════════════════════════════════
 
-async function main() {
+async function main(): Promise<void> {
   banner()
 
-  const argv = process.argv.slice(2)
-  const argName = argv.find(a => !a.startsWith('--'))
+  const argv    = process.argv.slice(2)
+  const argName = argv.find((a) => !a.startsWith('--'))
 
   let cancelled = false
 
   const answers = await prompts(
     [
+      // ── Project name ───────────────────────────────────────────────────────
       {
-        type: 'text',
-        name: 'projectName',
-        message: 'Project name:',
-        initial: argName ?? 'my-fono-app',
+        type:     'text',
+        name:     'projectName',
+        message:  'Project name:',
+        initial:  argName ?? 'my-fono-app',
         validate: validateName,
       },
+
+      // ── Overwrite guard ────────────────────────────────────────────────────
       {
         type: (prev: string) => {
           const dir = resolve(process.cwd(), prev)
-          if (existsSync(dir) && !isEmpty(dir)) return 'confirm'
-          return null as any
+          return existsSync(dir) && !isDirEmpty(dir)
+            ? 'confirm'
+            : (null as unknown as 'confirm')
         },
-        name: 'overwrite',
+        name:    'overwrite',
         message: (prev: string) =>
-          `${yellow('!')} "${prev}" already exists and is not empty. Overwrite?`,
+          `${yellow('!')} "${prev}" is not empty. Overwrite?`,
         initial: false,
       },
       {
-        type: (_: any, values: any) => {
-          if (values.overwrite === false) {
-            cancelled = true
-            return null as any
-          }
-          return null as any
+        type: (_: unknown, values: Partial<Answers & { overwrite: boolean }>) => {
+          if (values.overwrite === false) cancelled = true
+          return null as unknown as 'text'
         },
-        name: '_guard',
+        name:    '_guard',
         message: '',
       },
+
+      // ── Runtime ────────────────────────────────────────────────────────────
       {
-        type: 'select',
-        name: 'runtime',
+        type:    'select',
+        name:    'runtime',
         message: 'Target runtime:',
         choices: [
-          { title: `${green('Node.js')}  ${dim('(recommended, @hono/node-server)')}`, value: 'node' },
-          { title: `${magenta('Bun')}      ${dim('(fast startup, built-in serve)')}`, value: 'bun' },
-          { title: `${cyan('Deno')}     ${dim('(Deno.serve, permissions)')}`, value: 'deno' },
-          { title: `${yellow('Cloudflare Workers')} ${dim('(edge, wrangler)')}`, value: 'cloudflare' },
-          { title: `${dim('Generic')}  ${dim('(export handler, WinterCG)')}`, value: 'generic' },
+          { title: `${green('Node.js')}            ${dim('@hono/node-server')}`,       value: 'node' },
+          { title: `${magenta('Bun')}              ${dim('Bun.serve, fast startup')}`, value: 'bun' },
+          { title: `${cyan('Deno')}             ${dim('Deno.serve, permissions')}`,   value: 'deno' },
+          { title: `${yellow('Cloudflare Workers')} ${dim('edge, wrangler')}`,         value: 'cloudflare' },
+          { title: `${dim('Generic')}            ${dim('WinterCG, export handler')}`, value: 'generic' },
         ],
       },
+
+      // ── Template ───────────────────────────────────────────────────────────
       {
-        type: 'select',
-        name: 'template',
+        type:    'select',
+        name:    'template',
         message: 'Template:',
         choices: [
-          { title: `${green('Minimal')}  ${dim('Home + About + /api health')}`, value: 'minimal' },
-          { title: `${cyan('Full')}     ${dim('+ Counter (signals) + Posts [slug] + store')}`, value: 'full' },
+          {
+            title: `${green('Minimal')}  ${dim('Home + About + /api/health')}`,
+            value: 'minimal',
+          },
+          {
+            title: `${cyan('Full')}     ${dim('+ Counter (signals) + Posts [slug] + store')}`,
+            value: 'full',
+          },
         ],
       },
+
+      // ── Package manager ────────────────────────────────────────────────────
       {
-        type: 'select',
-        name: 'pkgManager',
+        type:    'select',
+        name:    'pkgManager',
         message: 'Package manager:',
-        choices: (_, values: Partial<Answers>) => {
+        choices: (_: unknown, values: Partial<Answers>) => {
           const base = [
             { title: 'npm',  value: 'npm' },
             { title: 'pnpm', value: 'pnpm' },
             { title: 'yarn', value: 'yarn' },
           ]
-          if (values.runtime === 'bun')  return [{ title: 'bun', value: 'bun' }, ...base]
+          if (values.runtime === 'bun')  return [{ title: 'bun',  value: 'bun'  }, ...base]
           if (values.runtime === 'deno') return [{ title: 'deno', value: 'deno' }, ...base]
           return base
         },
       },
+
+      // ── Install + git ──────────────────────────────────────────────────────
       {
-        type: 'confirm',
-        name: 'installDeps',
+        type:    'confirm',
+        name:    'installDeps',
         message: 'Install dependencies now?',
         initial: true,
       },
       {
-        type: 'confirm',
-        name: 'gitInit',
+        type:    'confirm',
+        name:    'gitInit',
         message: 'Initialize a git repository?',
         initial: true,
       },
     ],
-    {
-      onCancel() { cancelled = true },
-    }
+    { onCancel(): void { cancelled = true } },
   )
 
   if (cancelled) {
@@ -724,38 +794,37 @@ async function main() {
     process.exit(1)
   }
 
-  const projectDir = resolve(process.cwd(), answers.projectName)
+  const typedAnswers = answers as Answers
+  const projectDir   = resolve(process.cwd(), typedAnswers.projectName)
+
   mkdirSync(projectDir, { recursive: true })
 
   console.log()
-  console.log(`  Scaffolding ${bold(cyan(answers.projectName))}…`)
+  console.log(`  Scaffolding ${bold(cyan(typedAnswers.projectName))}…`)
   console.log()
 
-  scaffold(projectDir, answers as Answers)
+  scaffold(projectDir, typedAnswers)
 
-  if (answers.installDeps) {
-    console.log(`  Installing dependencies with ${bold(answers.pkgManager)}…\n`)
+  if (typedAnswers.installDeps) {
+    console.log(`  Installing with ${bold(typedAnswers.pkgManager)}…\n`)
     try {
-      installCmds(answers.pkgManager as PkgMgr, projectDir)
+      runInstall(typedAnswers.pkgManager, projectDir)
     } catch {
-      console.log(yellow('\n  Dependency install failed. Run it manually.\n'))
+      console.log(yellow('\n  Install failed — run it manually.\n'))
     }
   }
 
-  if (answers.gitInit) {
-    try { initGit(projectDir) } catch { /* git may not be installed */ }
+  if (typedAnswers.gitInit) {
+    try { runGitInit(projectDir) } catch { /* git not available */ }
   }
 
   console.log()
   console.log(green('  Done! 🎉'))
-  console.log()
-  console.log('  Next steps:')
-  console.log(nextSteps(answers.projectName, answers as Answers))
-  console.log(`  Docs: ${cyan('https://github.com/your-org/fono')}`)
-  console.log()
+  printNextSteps(typedAnswers.projectName, typedAnswers)
 }
 
-main().catch((e) => {
-  console.error(red(e.message))
+main().catch((e: unknown) => {
+  const msg = e instanceof Error ? e.message : String(e)
+  console.error(red(`\n  Error: ${msg}\n`))
   process.exit(1)
 })

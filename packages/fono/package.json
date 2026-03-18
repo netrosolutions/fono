@@ -1,22 +1,35 @@
 {
-  "name": "fono",
-  "version": "0.1.0",
-  "description": "Full-stack Hono framework — SSR, SPA, Vue-like reactivity, route groups, middleware and API routes in 3 files",
+  "name": "@mdakashdeveloper/fono",
+  "version": "0.1.2",
+  "description": "Full-stack Hono framework — SSR, SPA, Vue-like reactivity, route groups, middleware and API routes",
   "type": "module",
   "license": "MIT",
-  "author": "Your Name <you@example.com>",
-  "homepage": "https://github.com/your-org/fono#readme",
+  "author": "MD Ashikur Rahman<info@netrosolutions.com>",
+  "homepage": "https://github.com/mdakashdeveloper/fono",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/fono.git",
+    "url": "git+https://github.com/mdakashdeveloper/fono.git",
     "directory": "packages/fono"
   },
   "bugs": {
-    "url": "https://github.com/your-org/fono/issues"
+    "url": "https://github.com/mdakashdeveloper/fono/issues"
   },
   "keywords": [
-    "hono", "framework", "fullstack", "ssr", "spa", "reactivity",
-    "signals", "jsx", "tsx", "node", "bun", "deno", "cloudflare-workers", "edge"
+    "fono",
+    "hono",
+    "framework",
+    "fullstack",
+    "ssr",
+    "spa",
+    "reactivity",
+    "signals",
+    "jsx",
+    "tsx",
+    "node",
+    "bun",
+    "deno",
+    "cloudflare-workers",
+    "edge"
   ],
   "exports": {
     ".": {
@@ -54,7 +67,7 @@
     "build": "tsup",
     "build:watch": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist",
+    "clean": "rimraf dist",
     "prepublishOnly": "npm run clean && npm run build && npm run typecheck"
   },
   "peerDependencies": {
@@ -67,11 +80,12 @@
     }
   },
   "devDependencies": {
-    "@hono/node-server": "^1.14.0",
-    "@types/node": "^22.0.0",
-    "hono": "^4.12.0",
-    "tsup": "^8.3.0",
-    "typescript": "^5.8.0",
-    "vite": "^6.0.0"
+    "@hono/node-server": "^1.19.11",
+    "@types/node": "^25.5.0",
+    "hono": "^4.12.8",
+    "rimraf": "^6.1.3",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0"
   }
 }
