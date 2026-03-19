@@ -1,6 +1,6 @@
 {
   "name": "@mdakashdeveloper/create-fono",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Create a new Fono app — SSR + SPA full-stack Hono framework",
   "type": "module",
   "license": "MIT",
