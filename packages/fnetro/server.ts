@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-//  Fono · server.ts
+//  FNetro · server.ts
 //  Hono server integration · SSR renderer · Vite plugin (dual-build)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ function buildShell(opts: {
 <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
-<div id="fono-app">${opts.pageHtml}</div>
+<div id="fnetro-app">${opts.pageHtml}</div>
 <script>window.${STATE_KEY}=${opts.stateJson};window.${PARAMS_KEY}=${opts.paramsJson};</script>
 <script type="module" src="/assets/client.js"></script>
 </body>
@@ -98,7 +98,7 @@ async function renderFullPage(
   url: string,
   params: Record<string, string>,
   appLayout: LayoutDef | undefined,
-  title = 'Fono'
+  title = 'FNetro'
 ): Promise<string> {
   const pageHtml = await renderInner(route, data, url, params, appLayout)
   return buildShell({
@@ -110,17 +110,17 @@ async function renderFullPage(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 3  createFono — assemble the Hono app
+//  § 3  createFNetro — assemble the Hono app
 // ══════════════════════════════════════════════════════════════════════════════
 
-export interface FonoApp {
+export interface FNetroApp {
   /** The underlying Hono instance — add raw routes, custom error handlers, etc. */
   app: Hono
   /** Hono fetch handler — export this as default for edge runtimes */
   handler: Hono['fetch']
 }
 
-export function createFono(config: AppConfig): FonoApp {
+export function createFNetro(config: AppConfig): FNetroApp {
   const app = new Hono()
 
   // Static assets
@@ -236,7 +236,7 @@ export function detectRuntime(): Runtime {
 }
 
 export interface ServeOptions {
-  app: FonoApp
+  app: FNetroApp
   port?: number
   hostname?: string
   /** Override auto-detected runtime. */
@@ -251,7 +251,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const hostname = opts.hostname ?? '0.0.0.0'
   const staticDir = opts.staticDir ?? './dist'
   const addr = `http://${hostname === '0.0.0.0' ? 'localhost' : hostname}:${port}`
-  const logReady = () => console.log(`\n🔥  Fono [${runtime}] ready  →  ${addr}\n`)
+  const logReady = () => console.log(`\n🔥  FNetro [${runtime}] ready  →  ${addr}\n`)
 
   switch (runtime) {
     case 'node': {
@@ -275,7 +275,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
       break
     }
     default:
-      console.warn('[fono] serve() is a no-op on edge runtimes. Export `app.handler` instead.')
+      console.warn('[fnetro] serve() is a no-op on edge runtimes. Export `app.handler` instead.')
   }
 }
 
@@ -283,7 +283,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
 //  § 5  Vite plugin — automatic dual build (server + client)
 // ══════════════════════════════════════════════════════════════════════════════
 
-export interface FonoPluginOptions {
+export interface FNetroPluginOptions {
   /**
    * Server entry file (exports the Hono app / calls serve()).
    * @default 'app/server.ts'
@@ -318,7 +318,7 @@ export interface FonoPluginOptions {
 
 const NODE_BUILTINS = /^node:|^(assert|buffer|child_process|cluster|crypto|dgram|dns|domain|events|fs|http|https|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|worker_threads|zlib)$/
 
-export function fonoVitePlugin(opts: FonoPluginOptions = {}): Plugin[] {
+export function fnetroVitePlugin(opts: FNetroPluginOptions = {}): Plugin[] {
   const {
     serverEntry = 'app/server.ts',
     clientEntry  = 'app/client.ts',
@@ -336,13 +336,13 @@ export function fonoVitePlugin(opts: FonoPluginOptions = {}): Plugin[] {
 
   // Common JSX transform for all .tsx files
   const jsxPlugin: Plugin = {
-    name: 'fono:jsx',
+    name: 'fnetro:jsx',
     config: () => ({ esbuild: sharedEsbuild }),
   }
 
   // Server build plugin
   const serverPlugin: Plugin = {
-    name: 'fono:server',
+    name: 'fnetro:server',
     apply: 'build',
     enforce: 'pre',
 
@@ -371,7 +371,7 @@ export function fonoVitePlugin(opts: FonoPluginOptions = {}): Plugin[] {
     },
 
     async closeBundle() {
-      console.log('\n⚡  Fono: building client bundle…\n')
+      console.log('\n⚡  FNetro: building client bundle…\n')
 
       const { build } = await import('vite')
       await build({
@@ -390,7 +390,7 @@ export function fonoVitePlugin(opts: FonoPluginOptions = {}): Plugin[] {
         },
       } satisfies InlineConfig)
 
-      console.log('\n✅  Fono: both bundles ready\n')
+      console.log('\n✅  FNetro: both bundles ready\n')
     },
   }
 
@@ -411,5 +411,5 @@ export {
 export type {
   AppConfig, PageDef, GroupDef, LayoutDef, ApiRouteDef, MiddlewareDef,
   Ref, ComputedRef, WritableComputedRef, WatchSource, WatchOptions,
-  LoaderCtx, FonoMiddleware, AnyJSX,
+  LoaderCtx, FNetroMiddleware, AnyJSX,
 } from './core'

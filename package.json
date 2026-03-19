@@ -1,5 +1,5 @@
 {
-  "name": "fono-monorepo",
+  "name": "fnetro-monorepo",
   "private": true,
   "type": "module",
   "workspaces": [

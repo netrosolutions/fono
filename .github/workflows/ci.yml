@@ -40,17 +40,17 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Typecheck — fono
-        run: npm run typecheck --workspace=packages/fono
+      - name: Typecheck — fnetro
+        run: npm run typecheck --workspace=packages/fnetro
 
-      - name: Build — fono
-        run: npm run build --workspace=packages/fono
+      - name: Build — fnetro
+        run: npm run build --workspace=packages/fnetro
 
-      - name: Typecheck — create-fono
-        run: npm run typecheck --workspace=packages/create-fono
+      - name: Typecheck — create-fnetro
+        run: npm run typecheck --workspace=packages/create-fnetro
 
-      - name: Build — create-fono
-        run: npm run build --workspace=packages/create-fono
+      - name: Build — create-fnetro
+        run: npm run build --workspace=packages/create-fnetro
 
   # ── Scaffold smoke test ──────────────────────────────────────────────────────
   # Runs only on Node 22 (LTS) after the build matrix passes.
@@ -80,7 +80,7 @@ jobs:
 
       - name: Scaffold — ${{ matrix.template }} template (node runtime)
         run: |
-          node packages/create-fono/dist/index.js test-app \
+          node packages/create-fnetro/dist/index.js test-app \
             --ci \
             --runtime node \
             --template ${{ matrix.template }} \
@@ -144,7 +144,7 @@ jobs:
           import { readFileSync } from 'node:fs'
           const p = JSON.parse(readFileSync('test-app/package.json','utf8'))
           const checks = {
-            'fono dep':          !!p.dependencies?.['@mdakashdeveloper/fono'],
+            'fnetro dep':          !!p.dependencies?.['@netrojs/fnetro'],
             'hono dep':          !!p.dependencies?.hono,
             'type module':       p.type === 'module',
             'build script':      !!p.scripts?.build,
@@ -161,9 +161,9 @@ jobs:
 
       - name: Validate package imports
         run: |
-          grep -q "@mdakashdeveloper/fono" test-app/server.ts \
-            && echo "  ok server.ts imports fono" \
-            || (echo "  FAIL server.ts missing fono import" && exit 1)
-          grep -q "fonoVitePlugin" test-app/vite.config.ts \
-            && echo "  ok vite.config.ts uses fonoVitePlugin" \
-            || (echo "  FAIL vite.config.ts missing fonoVitePlugin" && exit 1)
+          grep -q "@netrojs/fnetro" test-app/server.ts \
+            && echo "  ok server.ts imports fnetro" \
+            || (echo "  FAIL server.ts missing fnetro import" && exit 1)
+          grep -q "fnetroVitePlugin" test-app/vite.config.ts \
+            && echo "  ok vite.config.ts uses fnetroVitePlugin" \
+            || (echo "  FAIL vite.config.ts missing fnetroVitePlugin" && exit 1)

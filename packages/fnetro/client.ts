@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-//  Fono · client.ts
+//  FNetro · client.ts
 //  SPA runtime · hook patching · navigation · prefetch · lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -161,7 +161,7 @@ async function renderPage(
   url: string,
   params: Record<string, string>
 ) {
-  const container = document.getElementById('fono-app')!
+  const container = document.getElementById('fnetro-app')!
   const pageNode = (jsx as any)(route.page.Page, { ...data, url, params })
   const layout = route.layout !== undefined ? route.layout : currentLayout
   const tree = layout
@@ -201,7 +201,7 @@ export async function navigate(
     }
     for (const fn of afterNavListeners) await fn(u.pathname)
   } catch (e) {
-    console.error('[fono] Navigation failed:', e)
+    console.error('[fnetro] Navigation failed:', e)
     location.href = to
   }
 }
@@ -269,7 +269,7 @@ export async function boot(options: BootOptions): Promise<void> {
   const match = matchRoute(compiled, pathname)
 
   if (!match) {
-    console.warn(`[fono] No route matched "${pathname}" — not hydrating`)
+    console.warn(`[fnetro] No route matched "${pathname}" — not hydrating`)
     return
   }
 

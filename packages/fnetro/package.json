@@ -1,21 +1,21 @@
 {
-  "name": "@mdakashdeveloper/fono",
-  "version": "0.1.2",
+  "name": "@netrojs/fnetro",
+  "version": "0.1.4",
   "description": "Full-stack Hono framework — SSR, SPA, Vue-like reactivity, route groups, middleware and API routes",
   "type": "module",
   "license": "MIT",
   "author": "MD Ashikur Rahman<info@netrosolutions.com>",
-  "homepage": "https://github.com/mdakashdeveloper/fono",
+  "homepage": "https://github.com/netrosolutions/fnetro",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mdakashdeveloper/fono.git",
-    "directory": "packages/fono"
+    "url": "git+https://github.com/netrosolutions/fnetro.git",
+    "directory": "packages/fnetro"
   },
   "bugs": {
-    "url": "https://github.com/mdakashdeveloper/fono/issues"
+    "url": "https://github.com/netrosolutions/fnetro/issues"
   },
   "keywords": [
-    "fono",
+    "fnetro",
     "hono",
     "framework",
     "fullstack",

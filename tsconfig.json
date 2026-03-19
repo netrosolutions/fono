@@ -15,8 +15,8 @@
     "verbatimModuleSyntax": true
   },
   "references": [
-    { "path": "./packages/fono" },
-    { "path": "./packages/create-fono" }
+    { "path": "./packages/fnetro" },
+    { "path": "./packages/create-fnetro" }
   ],
   "include": [],
   "exclude": ["node_modules", "**/dist"]

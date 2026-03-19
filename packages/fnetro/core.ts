@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-//  Fono · core.ts
+//  FNetro · core.ts
 //  Full Vue-like reactivity + route / layout / middleware definitions
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -371,7 +371,7 @@ function createHandler(shallow = false, readonly = false): ProxyHandler<object> 
     },
     set(target, key, value, receiver) {
       if (readonly) {
-        console.warn(`[fono] Cannot set "${String(key)}" on readonly object`)
+        console.warn(`[fnetro] Cannot set "${String(key)}" on readonly object`)
         return true
       }
       const oldVal = (target as any)[key]
@@ -530,14 +530,14 @@ export function watch(source: any, cb: any, opts: WatchOptions = {}): StopHandle
 //       Server: returns plain values. Client: patched by client.ts
 // ══════════════════════════════════════════════════════════════════════════════
 
-interface FonoHooks {
+interface FNetroHooks {
   useValue<T>(r: Ref<T> | (() => T)): T
   useLocalRef<T>(init: T): Ref<T>
   useLocalReactive<T extends object>(init: T): T
 }
 
 // SSR fallbacks — no re-renders needed on server
-export const __hooks: FonoHooks = {
+export const __hooks: FNetroHooks = {
   useValue: (r) => isRef(r) ? r.value : r(),
   useLocalRef: (init) => ref(init),
   useLocalReactive: (init) => reactive(init),
@@ -590,14 +590,14 @@ export function useLocalReactive<T extends object>(init: T): T {
 // ══════════════════════════════════════════════════════════════════════════════
 
 export type LoaderCtx = Context
-export type FonoMiddleware = MiddlewareHandler
+export type FNetroMiddleware = MiddlewareHandler
 export type AnyJSX = any
 
 export interface PageDef<TData extends object = {}> {
   readonly __type: 'page'
   path: string
   /** Middleware applied only to this route */
-  middleware?: FonoMiddleware[]
+  middleware?: FNetroMiddleware[]
   /** Server-side data loader. Return value becomes Page props. */
   loader?: (c: LoaderCtx) => TData | Promise<TData>
   /** Override the group/app layout for this page. Pass `false` to use no layout. */
@@ -613,7 +613,7 @@ export interface GroupDef {
   /** Layout override for all pages in this group */
   layout?: LayoutDef | false
   /** Middleware applied to every route in the group */
-  middleware?: FonoMiddleware[]
+  middleware?: FNetroMiddleware[]
   /** Pages and nested groups */
   routes: (PageDef<any> | GroupDef | ApiRouteDef)[]
 }
@@ -628,19 +628,19 @@ export interface ApiRouteDef {
   /** Mount path — e.g. '/api' or '/api/admin' */
   path: string
   /** Register raw Hono routes on the provided sub-app */
-  register: (app: Hono, middleware: FonoMiddleware[]) => void
+  register: (app: Hono, middleware: FNetroMiddleware[]) => void
 }
 
 export interface MiddlewareDef {
   readonly __type: 'middleware'
-  handler: FonoMiddleware
+  handler: FNetroMiddleware
 }
 
 export interface AppConfig {
   /** Default layout for all pages */
   layout?: LayoutDef
   /** Global middleware applied before every route */
-  middleware?: FonoMiddleware[]
+  middleware?: FNetroMiddleware[]
   /** Top-level routes, groups, and API routes */
   routes: (PageDef<any> | GroupDef | ApiRouteDef)[]
   /** 404 page */
@@ -667,7 +667,7 @@ export function defineLayout(
   return { __type: 'layout', Component }
 }
 
-export function defineMiddleware(handler: FonoMiddleware): MiddlewareDef {
+export function defineMiddleware(handler: FNetroMiddleware): MiddlewareDef {
   return { __type: 'middleware', handler }
 }
 
@@ -684,14 +684,14 @@ export interface ResolvedRoute {
   fullPath: string
   page: PageDef<any>
   layout: LayoutDef | false | undefined
-  middleware: FonoMiddleware[]
+  middleware: FNetroMiddleware[]
 }
 
 export function resolveRoutes(
   routes: (PageDef<any> | GroupDef | ApiRouteDef)[],
   options: {
     prefix?: string
-    middleware?: FonoMiddleware[]
+    middleware?: FNetroMiddleware[]
     layout?: LayoutDef | false
   } = {}
 ): { pages: ResolvedRoute[]; apis: ApiRouteDef[] } {
@@ -720,9 +720,9 @@ export function resolveRoutes(
 }
 
 // ── Shared constants ──────────────────────────────────────────────────────────
-export const SPA_HEADER   = 'x-fono-spa'
-export const STATE_KEY    = '__FONO_STATE__'
-export const PARAMS_KEY   = '__FONO_PARAMS__'
+export const SPA_HEADER   = 'x-fnetro-spa'
+export const STATE_KEY    = '__FNETRO_STATE__'
+export const PARAMS_KEY   = '__FNETRO_PARAMS__'
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function hasChanged(a: unknown, b: unknown): boolean {

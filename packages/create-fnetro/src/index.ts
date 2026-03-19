@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
-//  create-fono · Interactive project scaffolding CLI
+//  create-fnetro · Interactive project scaffolding CLI
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { existsSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs'
@@ -15,10 +15,10 @@ import { bold, cyan, green, red, yellow, dim, magenta } from 'kolorist'
 
 const CFG = {
   /** npm package name for the framework */
-  FONO_PKG: '@mdakashdeveloper/fono',
+  FNETRO_PKG: '@netrojs/fnetro',
 
-  /** Scaffolded app's default fono dependency version */
-  FONO_VERSION: '^0.1.2',
+  /** Scaffolded app's default fnetro dependency version */
+  FNETRO_VERSION: '^0.1.4',
 
   /** Hono peer dep version used in scaffolded apps */
   HONO_VERSION: '^4.12.8',
@@ -36,13 +36,16 @@ const CFG = {
   WRANGLER_VERSION: '^3.0.0',
 
   /** Docs / repo URL shown in CLI output and generated READMEs */
-  DOCS_URL: 'https://github.com/mdakashdeveloper/fono',
+  DOCS_URL: 'https://github.com/netrosolutions/fnetro',
 
   /** Default port written into generated server entries */
   DEFAULT_PORT: 3000,
 
+  /** @hono/vite-dev-server version — runs the FNetro app through Vite's dev server */
+  HONO_VDS_VERSION: '^0.25.0',
+
   /** Git commit message used when --git-init is chosen */
-  GIT_INIT_COMMIT: 'chore: initial fono scaffold',
+  GIT_INIT_COMMIT: 'chore: initial fnetro scaffold',
 } as const
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -68,7 +71,7 @@ interface Answers {
 
 function banner(): void {
   console.log()
-  console.log(bold(cyan('  ⬡  Fono')))
+  console.log(bold(cyan('  ⬡  FNetro')))
   console.log(dim('  Full-stack Hono framework — SSR + SPA + Reactivity'))
   console.log()
 }
@@ -92,43 +95,81 @@ function writeFile(filePath: string, content: string): void {
   writeFileSync(filePath, content, 'utf-8')
 }
 
-/** Build a package sub-path: pkg('server') → '@mdakashdeveloper/fono/server' */
+/** Build a package sub-path: pkg('server') → '@netrojs/fnetro/server' */
 function pkg(subpath?: string): string {
-  return subpath ? `${CFG.FONO_PKG}/${subpath}` : CFG.FONO_PKG
+  return subpath ? `${CFG.FNETRO_PKG}/${subpath}` : CFG.FNETRO_PKG
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  § 3  Template generators — TypeScript source strings
 // ══════════════════════════════════════════════════════════════════════════════
 
-function genServerEntry(runtime: Runtime): string {
-  const port = CFG.DEFAULT_PORT
-
-  const shared = `import { createFono } from '${pkg('server')}'
+/**
+ * app.ts — the shared FNetro app.
+ * Used by @hono/vite-dev-server in dev mode AND imported by server.ts in production.
+ * Exports `fnetro` (the FNetroApp instance) and `default` (the fetch handler).
+ */
+function genAppEntry(): string {
+  return `import { createFNetro } from '${pkg('server')}'
 import { RootLayout } from './app/layouts'
 import home from './app/routes/home'
 import about from './app/routes/about'
 import { apiRoutes } from './app/routes/api'
 
-const fono = createFono({
+export const fnetro = createFNetro({
   layout: RootLayout,
   routes: [apiRoutes, home, about],
 })
 
-fono.app.onError((err, c) => {
+fnetro.app.onError((err, c) => {
   console.error(err)
   return c.json({ error: err.message }, 500)
-})`
+})
 
-  const serveLines: Record<Runtime, string> = {
-    node:       `\nimport { serve } from '${pkg('server')}'\nawait serve({ app: fono, port: ${port} })\n`,
-    bun:        `\nimport { serve } from '${pkg('server')}'\nawait serve({ app: fono, port: ${port}, runtime: 'bun' })\n`,
-    deno:       `\nimport { serve } from '${pkg('server')}'\nawait serve({ app: fono, port: ${port}, runtime: 'deno' })\n`,
-    cloudflare: `\n// Cloudflare Workers — export the fetch handler\nexport default { fetch: fono.handler }\n`,
-    generic:    `\n// WinterCG-compatible — export the fetch handler\nexport default { fetch: fono.handler }\nexport const handler = fono.handler\n`,
+// Default export is the fetch handler — consumed by @hono/vite-dev-server in dev
+// and by server.ts / edge exports in production.
+export default fnetro.handler
+`
+}
+
+/**
+ * server.ts — production entry point.
+ * Imports the shared app and calls the appropriate serve() for the runtime.
+ * Never imported by the dev server — that uses app.ts directly.
+ */
+function genServerEntry(runtime: Runtime): string {
+  const port = CFG.DEFAULT_PORT
+
+  const body: Record<Runtime, string> = {
+    node: `import { serve } from '${pkg('server')}'
+import { fnetro } from './app'
+
+await serve({ app: fnetro, port: ${port} })
+`,
+    bun: `import { serve } from '${pkg('server')}'
+import { fnetro } from './app'
+
+await serve({ app: fnetro, port: ${port}, runtime: 'bun' })
+`,
+    deno: `import { serve } from '${pkg('server')}'
+import { fnetro } from './app'
+
+await serve({ app: fnetro, port: ${port}, runtime: 'deno' })
+`,
+    // Edge runtimes: just re-export the handler — the platform calls fetch()
+    cloudflare: `import handler from './app'
+
+export default { fetch: handler }
+`,
+    generic: `import handler, { fnetro } from './app'
+
+// WinterCG-compatible — export the fetch handler
+export default { fetch: handler }
+export { fnetro }
+`,
   }
 
-  return shared + serveLines[runtime]
+  return body[runtime]
 }
 
 function genClientEntry(): string {
@@ -156,7 +197,7 @@ export const RootLayout = defineLayout(function Layout({ children, url }) {
   return (
     <div class="app">
       <nav class="nav">
-        <a class="logo" href="/">⬡ Fono</a>
+        <a class="logo" href="/">⬡ FNetro</a>
         <div class={\`nav-links \${open ? 'open' : ''}\`}>
           <a href="/" class={\`nav-link\${url === '/' ? ' active' : ''}\`}>Home</a>
           <a href="/about" class={\`nav-link\${url === '/about' ? ' active' : ''}\`}>About</a>
@@ -166,7 +207,7 @@ export const RootLayout = defineLayout(function Layout({ children, url }) {
         </button>
       </nav>
       <main class="main">{children}</main>
-      <footer class="footer">Built with ⬡ Fono</footer>
+      <footer class="footer">Built with ⬡ FNetro</footer>
     </div>
   )
 })
@@ -178,11 +219,11 @@ function genHomeRoute(): string {
 
 export default definePage({
   path: '/',
-  loader: () => ({ message: 'Hello from Fono!' }),
+  loader: () => ({ message: 'Hello from FNetro!' }),
   Page({ message }) {
     return (
       <div class="page">
-        <h1>⬡ Fono</h1>
+        <h1>⬡ FNetro</h1>
         <p>{message}</p>
         <p>
           Edit <code>app/routes/home.tsx</code> and save to see changes.
@@ -205,7 +246,7 @@ export default definePage({
     return (
       <div class="page">
         <h1>About</h1>
-        <p>Fono v{version} — SSR + SPA + Vue-like reactivity on Hono.</p>
+        <p>FNetro v{version} — SSR + SPA + Vue-like reactivity on Hono.</p>
         <a href="/">← Home</a>
       </div>
     )
@@ -247,52 +288,111 @@ code { background: #1d2130; padding: .1rem .4rem; border-radius: 4px; font-famil
 }
 
 function genViteConfig(runtime: Runtime): string {
-  const isEdge = runtime === 'cloudflare' || runtime === 'generic'
-  const extras = isEdge ? `\n      serverExternal: [],` : ''
-  return `import { fonoVitePlugin } from '${pkg('vite')}'
+  // Adapter import line — each runtime has its own adapter for the dev server.
+  // Node uses the default export (no separate adapter package needed).
+  const adapterImport: Record<Runtime, string> = {
+    node:       `import devServer from '@hono/vite-dev-server'`,
+    bun:        `import devServer, { defaultOptions } from '@hono/vite-dev-server'\nimport bunAdapter from '@hono/vite-dev-server/bun'`,
+    deno:       `import devServer from '@hono/vite-dev-server'\nimport denoAdapter from '@hono/vite-dev-server/deno'`,
+    cloudflare: ``,  // uses wrangler dev — no vite dev server
+    generic:    `import devServer from '@hono/vite-dev-server'`,
+  }
 
-export default {
+  // devServer(...) plugin config — only for non-edge runtimes
+  const devServerPlugin: Record<Runtime, string> = {
+    node: `devServer({
+      entry: 'app.ts',  // exports fnetro.handler as default
+    }),`,
+    bun: `devServer({
+      adapter: bunAdapter,
+      entry: 'app.ts',  // exports fnetro.handler as default
+    }),`,
+    deno: `devServer({
+      adapter: denoAdapter,
+      entry: 'app.ts',  // exports fnetro.handler as default
+    }),`,
+    cloudflare: ``,
+    generic: `devServer({
+      entry: 'app.ts',  // exports fnetro.handler as default
+    }),`,
+  }
+
+  const isEdge = runtime === 'cloudflare' || runtime === 'generic'
+  const pluginLine = devServerPlugin[runtime]
+  const importLine = adapterImport[runtime]
+
+  return `import { defineConfig } from 'vite'
+import { fnetroVitePlugin } from '${pkg('vite')}'
+${importLine ? importLine + '\n' : ''}
+export default defineConfig({
   plugins: [
-    fonoVitePlugin({
+    // fnetroVitePlugin handles production builds (vite build):
+    //   - server bundle → dist/server/server.js
+    //   - client bundle → dist/assets/client.js
+    fnetroVitePlugin({
       serverEntry: 'server.ts',
-      clientEntry:  'client.ts',${extras}
+      clientEntry: 'client.ts',${isEdge ? '\n      serverExternal: [],' : ''}
     }),
-  ],
-}
+${pluginLine ? '    // @hono/vite-dev-server handles the dev workflow (vite):\n    //   - serves the FNetro app directly through Vite, no dist/ needed\n    //   - hot-reloads on source changes\n    ' + pluginLine + '\n' : ''}  ],
+  server: {
+    watch: {
+      // Don't watch generated output — Vite handles it
+      ignored: ['**/dist/**'],
+    },
+  },
+})
 `
 }
 
 function genPackageJson(name: string, runtime: Runtime): string {
-  const scripts: Record<string, string> = {
-    build:     'vite build',
-    typecheck: 'tsc --noEmit',
+  // `dev` runs the FNetro app through @hono/vite-dev-server — no build step needed.
+  // `bun --bun vite` tells Bun to use its own runtime instead of Node for Vite.
+  const devCmd: Record<Runtime, string> = {
+    node:       'vite',
+    bun:        'bun --bun vite --host',
+    deno:       'deno run -A npm:vite',
+    cloudflare: 'wrangler dev',
+    generic:    'vite',
   }
 
-  if (runtime === 'bun') {
-    scripts.start = 'bun dist/server/server.js'
-    scripts.dev   = 'bun --watch dist/server/server.js'
-  } else if (runtime === 'deno') {
-    scripts.start = 'deno run -A dist/server/server.js'
-    scripts.dev   = 'deno run --watch -A dist/server/server.js'
-  } else if (runtime === 'cloudflare') {
-    scripts.dev    = 'wrangler dev'
-    scripts.deploy = 'wrangler deploy'
-  } else {
-    scripts.start = 'node dist/server/server.js'
-    scripts.dev   = 'node --watch dist/server/server.js'
+  // `build` produces dist/server/server.js + dist/assets/client.js
+  const buildCmd: Record<Runtime, string> = {
+    node:       'vite build',
+    bun:        'bun --bun vite build',
+    deno:       'deno run -A npm:vite build',
+    cloudflare: 'vite build',
+    generic:    'vite build',
+  }
+
+  // `start` runs the pre-built production server (not needed for edge runtimes)
+  const startCmd: Partial<Record<Runtime, string>> = {
+    node:    'node dist/server/server.js',
+    bun:     'bun dist/server/server.js',
+    deno:    'deno run -A dist/server/server.js',
+    generic: 'node dist/server/server.js',
+  }
+
+  const scripts: Record<string, string> = {
+    dev:       devCmd[runtime],
+    build:     buildCmd[runtime],
+    typecheck: 'tsc --noEmit',
+    ...(startCmd[runtime] ? { start: startCmd[runtime]! } : {}),
+    ...(runtime === 'cloudflare' ? { deploy: 'wrangler deploy' } : {}),
   }
 
   const dependencies: Record<string, string> = {
-    [CFG.FONO_PKG]: CFG.FONO_VERSION,
+    [CFG.FNETRO_PKG]: CFG.FNETRO_VERSION,
     hono:           CFG.HONO_VERSION,
   }
 
   const devDependencies: Record<string, string> = {
-    vite:       CFG.VITE_VERSION,
-    typescript: CFG.TS_VERSION,
+    vite:                   CFG.VITE_VERSION,
+    typescript:             CFG.TS_VERSION,
+    '@hono/vite-dev-server': CFG.HONO_VDS_VERSION,
   }
 
   if (runtime === 'node')       devDependencies['@hono/node-server'] = CFG.HONO_NODE_VERSION
+  if (runtime === 'bun')        devDependencies['@types/bun']         = 'latest'
   if (runtime === 'cloudflare') devDependencies['wrangler']           = CFG.WRANGLER_VERSION
 
   return JSON.stringify(
@@ -345,7 +445,7 @@ function genDenoJson(name: string): string {
         dev:   'deno run --watch -A dist/server/server.js',
       },
       imports: {
-        [CFG.FONO_PKG]: `npm:${CFG.FONO_PKG}@${CFG.FONO_VERSION}`,
+        [CFG.FNETRO_PKG]: `npm:${CFG.FNETRO_PKG}@${CFG.FNETRO_VERSION}`,
         hono:            `npm:hono@${CFG.HONO_VERSION}`,
       },
     },
@@ -444,7 +544,7 @@ interface PostSummary {
 }
 
 const POSTS: PostSummary[] = [
-  { slug: 'hello-fono', title: 'Hello Fono',       date: '2025-01-01' },
+  { slug: 'hello-fnetro', title: 'Hello FNetro',       date: '2025-01-01' },
   { slug: 'signals',    title: 'How signals work',  date: '2025-01-08' },
 ]
 
@@ -479,9 +579,9 @@ interface Post {
 }
 
 const POSTS: Record<string, Post> = {
-  'hello-fono': {
-    title: 'Hello Fono',
-    body:  'Fono is a full-stack framework built on Hono — SSR, SPA, and Vue-like signals in 3 files.',
+  'hello-fnetro': {
+    title: 'Hello FNetro',
+    body:  'FNetro is a full-stack framework built on Hono — SSR, SPA, and Vue-like signals in 3 files.',
   },
   signals: {
     title: 'How signals work',
@@ -517,23 +617,31 @@ export default definePage<{ post: Post | null; slug: string }>({
 }
 
 function genProjectReadme(a: Answers): string {
-  const cmds: Record<PkgMgr, { install: string; build: string; start: string }> = {
-    npm:  { install: 'npm install',   build: 'npm run build',    start: 'npm start' },
-    pnpm: { install: 'pnpm install',  build: 'pnpm build',       start: 'pnpm start' },
-    bun:  { install: 'bun install',   build: 'bun run build',    start: 'bun start' },
-    yarn: { install: 'yarn',          build: 'yarn build',       start: 'yarn start' },
-    deno: { install: 'deno install',  build: 'deno task build',  start: 'deno task start' },
+  const cmds: Record<PkgMgr, { install: string; dev: string; build: string; start: string }> = {
+    npm:  { install: 'npm install',  dev: 'npm run dev',    build: 'npm run build',   start: 'npm start' },
+    pnpm: { install: 'pnpm install', dev: 'pnpm dev',       build: 'pnpm build',      start: 'pnpm start' },
+    bun:  { install: 'bun install',  dev: 'bun run dev',    build: 'bun run build',   start: 'bun start' },
+    yarn: { install: 'yarn',         dev: 'yarn dev',       build: 'yarn build',      start: 'yarn start' },
+    deno: { install: 'deno install', dev: 'deno task dev',  build: 'deno task build', start: 'deno task start' },
   }
-  const { install, build, start } = cmds[a.pkgManager]
+  const { install, dev, build, start } = cmds[a.pkgManager]
 
   return `# ${a.projectName}
 
-A [Fono](${CFG.DOCS_URL}) app — SSR + SPA + Vue-like reactivity on [Hono](https://hono.dev).
+A [FNetro](${CFG.DOCS_URL}) app — SSR + SPA + Vue-like reactivity on [Hono](https://hono.dev).
 
-## Getting started
+## Development
 
 \`\`\`bash
 ${install}
+${dev}
+\`\`\`
+
+> \`dev\` starts \`@hono/vite-dev-server\` — your FNetro app runs inside Vite with hot-reload. No build step needed before starting.
+
+## Production
+
+\`\`\`bash
 ${build}
 ${start}
 \`\`\`
@@ -541,7 +649,7 @@ ${start}
 ## Project structure
 
 \`\`\`
-server.ts            # Server entry — createFono() + serve()
+server.ts            # Server entry — createFNetro() + serve()
 client.ts            # Client entry — boot()
 app/
   layouts.tsx        # Root layout (nav, footer)
@@ -555,7 +663,7 @@ vite.config.ts
 tsconfig.json
 \`\`\`
 
-## Key Fono APIs used
+## Key FNetro APIs used
 
 | API | What it does |
 |---|---|
@@ -599,6 +707,10 @@ function scaffold(dir: string, answers: Answers): void {
   if (runtime === 'cloudflare') writeFile(join(dir, 'wrangler.toml'), genWranglerToml(answers.projectName))
 
   // App entry points
+  // app.ts  — shared FNetro app + handler export (used by dev server AND server.ts)
+  // server.ts — production serve() call (not imported by dev server)
+  // client.ts — browser SPA boot (intercepted clicks, prefetch, navigation)
+  writeFile(join(dir, 'app.ts'),    genAppEntry())
   writeFile(join(dir, 'server.ts'), genServerEntry(runtime))
   writeFile(join(dir, 'client.ts'), genClientEntry())
 
@@ -633,6 +745,15 @@ const INSTALL_CMD: Record<PkgMgr, string> = {
   deno: 'deno install',
 }
 
+// `dev` starts @hono/vite-dev-server — no pre-build needed.
+const DEV_CMD: Record<PkgMgr, string> = {
+  npm:  'npm run dev',
+  pnpm: 'pnpm dev',
+  bun:  'bun run dev',
+  yarn: 'yarn dev',
+  deno: 'deno task dev',
+}
+
 const BUILD_CMD: Record<PkgMgr, string> = {
   npm:  'npm run build',
   pnpm: 'pnpm build',
@@ -654,9 +775,9 @@ function runInstall(mgr: PkgMgr, dir: string): void {
 }
 
 function runGitInit(dir: string): void {
-  execSync('git init',                                    { cwd: dir, stdio: 'inherit' })
-  execSync('git add -A',                                  { cwd: dir, stdio: 'inherit' })
-  execSync(`git commit -m "${CFG.GIT_INIT_COMMIT}"`,     { cwd: dir, stdio: 'inherit' })
+  execSync('git init',                                { cwd: dir, stdio: 'inherit' })
+  execSync('git add -A',                              { cwd: dir, stdio: 'inherit' })
+  execSync(`git commit -m "${CFG.GIT_INIT_COMMIT}"`, { cwd: dir, stdio: 'inherit' })
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -667,10 +788,15 @@ function printNextSteps(projectName: string, answers: Answers): void {
   const inCurrentDir = projectName === '.'
   const lines: string[] = ['', '  Next steps:']
 
-  if (!inCurrentDir)          lines.push(`    ${cyan('cd')} ${projectName}`)
-  if (!answers.installDeps)   lines.push(`    ${cyan(INSTALL_CMD[answers.pkgManager])}`)
-  lines.push(`    ${cyan(BUILD_CMD[answers.pkgManager])}`)
-  lines.push(`    ${cyan(START_CMD[answers.pkgManager])}`)
+  if (!inCurrentDir)        lines.push(`    ${cyan('cd')} ${projectName}`)
+  if (!answers.installDeps) lines.push(`    ${cyan(INSTALL_CMD[answers.pkgManager])}`)
+
+  // Show dev (watch + auto-restart) as the primary workflow.
+  // For production: build → start.
+  lines.push(`    ${cyan(DEV_CMD[answers.pkgManager])}    ${dim('# starts dev server — no build step needed')}`)
+  lines.push('')
+  lines.push(`  ${dim('Production:')}`)
+  lines.push(`    ${cyan(BUILD_CMD[answers.pkgManager])} && ${cyan(START_CMD[answers.pkgManager])}`)
   lines.push('')
   lines.push(`  Docs: ${cyan(CFG.DOCS_URL)}`)
   lines.push('')
@@ -731,7 +857,7 @@ async function main(): Promise<void> {
   // Activated by --ci flag or CI=true env var. Skips all prompts and uses
   // flag values with sensible defaults. Used by GitHub Actions scaffold test.
   if (flags.ci) {
-    const projectName = argName ?? 'my-fono-app'
+    const projectName = argName ?? 'my-fnetro-app'
     const ciAnswers: Answers = {
       projectName,
       runtime:    flags.runtime    ?? 'node',
@@ -773,7 +899,7 @@ async function main(): Promise<void> {
         type:     'text',
         name:     'projectName',
         message:  'Project name:',
-        initial:  argName ?? 'my-fono-app',
+        initial:  argName ?? 'my-fnetro-app',
         validate: validateName,
       },
 
