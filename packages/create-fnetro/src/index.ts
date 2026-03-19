@@ -1,51 +1,33 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
 //  create-fnetro · Interactive project scaffolding CLI
+//  npm create fnetro@latest [project-name]
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { existsSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { execSync } from 'node:child_process'
 import prompts from 'prompts'
-import { bold, cyan, green, red, yellow, dim, magenta } from 'kolorist'
+import { bold, cyan, green, red, yellow, dim, magenta, blue } from 'kolorist'
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 0  Top-level configuration — edit here when versions or names change
+//  § 0  Central configuration
 // ══════════════════════════════════════════════════════════════════════════════
 
 const CFG = {
-  /** npm package name for the framework */
-  FNETRO_PKG: '@netrojs/fnetro',
-
-  /** Scaffolded app's default fnetro dependency version */
-  FNETRO_VERSION: '^0.1.6',
-
-  /** Hono peer dep version used in scaffolded apps */
-  HONO_VERSION: '^4.12.8',
-
-  /** Vite version used in scaffolded apps */
-  VITE_VERSION: '^8.0.0',
-
-  /** TypeScript version used in scaffolded apps */
-  TS_VERSION: '^5.9.3',
-
-  /** @hono/node-server version for Node runtime */
-  HONO_NODE_VERSION: '^1.19.11',
-
-  /** Wrangler version for Cloudflare runtime */
-  WRANGLER_VERSION: '^3.0.0',
-
-  /** Docs / repo URL shown in CLI output and generated READMEs */
-  DOCS_URL: 'https://github.com/netrojs/fnetro',
-
-  /** Default port written into generated server entries */
-  DEFAULT_PORT: 3000,
-
-  /** @hono/vite-dev-server version — runs the FNetro app through Vite's dev server */
-  HONO_VDS_VERSION: '^0.25.0',
-
-  /** Git commit message used when --git-init is chosen */
-  GIT_INIT_COMMIT: 'chore: initial fnetro scaffold',
+  FNETRO_PKG:         'fnetro',
+  FNETRO_VERSION:     '^0.2.0',
+  SOLID_VERSION:      '^1.9.11',
+  HONO_VERSION:       '^4.12.8',
+  VITE_VERSION:       '^8.0.1',
+  VITE_SOLID_VERSION: '^2.11.11',
+  TS_VERSION:         '^5.9.3',
+  HONO_NODE_VERSION:  '^1.19.11',
+  HONO_VDS_VERSION:   '^0.25.0',
+  WRANGLER_VERSION:   '^3.0.0',
+  DOCS_URL:           'https://github.com/netrosolutions/fnetro',
+  DEFAULT_PORT:       3000,
+  GIT_COMMIT:         'chore: initial fnetro scaffold',
 } as const
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -58,10 +40,10 @@ type Template = 'minimal' | 'full'
 
 interface Answers {
   projectName: string
-  runtime: Runtime
-  pkgManager: PkgMgr
-  template: Template
-  gitInit: boolean
+  runtime:     Runtime
+  pkgManager:  PkgMgr
+  template:    Template
+  gitInit:     boolean
   installDeps: boolean
 }
 
@@ -71,186 +53,275 @@ interface Answers {
 
 function banner(): void {
   console.log()
-  console.log(bold(cyan('  ⬡  FNetro')))
-  console.log(dim('  Full-stack Hono framework — SSR + SPA + Reactivity'))
+  console.log(bold(cyan('  ⬡  create-fnetro')))
+  console.log(dim('  Full-stack Hono + SolidJS — SSR · SPA · SEO · TypeScript'))
   console.log()
 }
 
 function validateName(name: string): string | true {
   if (!name.trim()) return 'Project name is required'
-  if (!/^[a-z0-9@._/-]+$/i.test(name)) return 'Invalid project name'
+  if (!/^[a-z0-9@._/-]+$/i.test(name)) return 'Use only letters, numbers, -, _ and .'
   return true
 }
 
 function isDirEmpty(dir: string): boolean {
   if (!existsSync(dir)) return true
-  let items: string[] = []
-  try { items = readdirSync(dir) } catch { return true }
-  return items.length === 0 || (items.length === 1 && items[0] === '.git')
+  try {
+    const items = readdirSync(dir)
+    return items.length === 0 || (items.length === 1 && items[0] === '.git')
+  } catch { return true }
 }
 
-/** Write a file, creating all parent directories as needed. Works on Windows and Unix. */
-function writeFile(filePath: string, content: string): void {
+function write(filePath: string, content: string): void {
   mkdirSync(dirname(filePath), { recursive: true })
   writeFileSync(filePath, content, 'utf-8')
 }
 
-/** Build a package sub-path: pkg('server') → '@netrojs/fnetro/server' */
-function pkg(subpath?: string): string {
-  return subpath ? `${CFG.FNETRO_PKG}/${subpath}` : CFG.FNETRO_PKG
+/** Build a package sub-path string, e.g. pkg('server') → 'fnetro/server' */
+function pkg(sub?: string): string {
+  return sub ? `${CFG.FNETRO_PKG}/${sub}` : CFG.FNETRO_PKG
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 3  Template generators — TypeScript source strings
+//  § 3  File generators
 // ══════════════════════════════════════════════════════════════════════════════
 
-/**
- * app.ts — the shared FNetro app.
- * Used by @hono/vite-dev-server in dev mode AND imported by server.ts in production.
- *
- * @hono/vite-dev-server imports this module and calls `mod.default.fetch(request)`.
- * It expects the default export to be a Hono app INSTANCE (which has a .fetch method),
- * NOT a bare function. So we export `fnetro.app` (the raw Hono instance), not `fnetro.handler`.
- */
-function genAppEntry(): string {
+// ── app.ts ────────────────────────────────────────────────────────────────────
+
+function genAppEntry(template: Template): string {
+  const extraImports = template === 'full'
+    ? `import counter from './app/routes/counter'\nimport posts from './app/routes/posts/index'\nimport postDetail from './app/routes/posts/[slug]'\n`
+    : ''
+  const extraRoutes = template === 'full'
+    ? `, counter, posts, postDetail` : ''
+
   return `import { createFNetro } from '${pkg('server')}'
 import { RootLayout } from './app/layouts'
 import home from './app/routes/home'
 import about from './app/routes/about'
 import { apiRoutes } from './app/routes/api'
-
+${extraImports}
 export const fnetro = createFNetro({
   layout: RootLayout,
-  routes: [apiRoutes, home, about],
+  seo: {
+    ogType:      'website',
+    twitterCard: 'summary_large_image',
+  },
+  routes: [apiRoutes, home, about${extraRoutes}],
 })
 
 fnetro.app.onError((err, c) => {
-  console.error(err)
+  console.error('[app error]', err)
   return c.json({ error: err.message }, 500)
 })
 
-// @hono/vite-dev-server calls default.fetch(request) — must be a Hono instance.
-// DO NOT export fnetro.handler here (bare function has no .fetch property).
+// @hono/vite-dev-server expects a Hono instance as the default export.
+// Do NOT export fnetro.handler here — it is a plain function, not a Hono instance.
 export default fnetro.app
 `
 }
 
-/**
- * server.ts — production entry point.
- * Imports the shared app and calls the appropriate serve() for the runtime.
- * Never imported by the dev server — that uses app.ts directly.
- */
+// ── server.ts ─────────────────────────────────────────────────────────────────
+
 function genServerEntry(runtime: Runtime): string {
   const port = CFG.DEFAULT_PORT
 
-  const body: Record<Runtime, string> = {
+  const entries: Record<Runtime, string> = {
     node: `import { serve } from '${pkg('server')}'
 import { fnetro } from './app'
 
-await serve({ app: fnetro, port: ${port} })
+await serve({
+  app:      fnetro,
+  port:     Number(process.env['PORT'] ?? ${port}),
+  runtime:  'node',
+  staticDir:'./dist',
+})
 `,
     bun: `import { serve } from '${pkg('server')}'
 import { fnetro } from './app'
 
-await serve({ app: fnetro, port: ${port}, runtime: 'bun' })
+await serve({
+  app:     fnetro,
+  port:    Number(process.env['PORT'] ?? ${port}),
+  runtime: 'bun',
+})
 `,
     deno: `import { serve } from '${pkg('server')}'
 import { fnetro } from './app'
 
-await serve({ app: fnetro, port: ${port}, runtime: 'deno' })
+await serve({
+  app:     fnetro,
+  port:    Number(Deno.env.get('PORT') ?? ${port}),
+  runtime: 'deno',
+})
 `,
-    // Edge runtimes: just re-export the handler — the platform calls fetch()
     cloudflare: `import handler from './app'
 
+// Cloudflare Workers — platform calls fetch() directly
 export default { fetch: handler }
 `,
-    generic: `import handler, { fnetro } from './app'
+    generic: `import { fnetro } from './app'
 
-// WinterCG-compatible — export the fetch handler
-export default { fetch: handler }
+// WinterCG-compatible — export the Hono fetch handler
+export default { fetch: fnetro.handler }
 export { fnetro }
 `,
   }
 
-  return body[runtime]
+  return entries[runtime]
 }
 
-function genClientEntry(): string {
-  return `import { boot } from '${pkg('client')}'
+// ── client.ts ─────────────────────────────────────────────────────────────────
+
+function genClientEntry(template: Template): string {
+  const extraImports = template === 'full'
+    ? `import counter from './app/routes/counter'\nimport posts from './app/routes/posts/index'\nimport postDetail from './app/routes/posts/[slug]'\n`
+    : ''
+  const extraRoutes = template === 'full'
+    ? `, counter, posts, postDetail` : ''
+
+  return `import { boot, useClientMiddleware } from '${pkg('client')}'
 import { RootLayout } from './app/layouts'
 import home from './app/routes/home'
 import about from './app/routes/about'
+${extraImports}
+// ── Client middleware ─────────────────────────────────────────────────────────
+// Runs before every SPA navigation.  Must be registered before boot().
+// Examples:
+//
+// Analytics:
+// useClientMiddleware(async (url, next) => {
+//   await next()
+//   analytics.page({ url })
+// })
+//
+// Auth guard:
+// useClientMiddleware(async (url, next) => {
+//   if (!isLoggedIn() && url.startsWith('/dashboard')) {
+//     await navigate('/login?redirect=' + encodeURIComponent(url))
+//     return                      // cancel original navigation
+//   }
+//   await next()
+// })
+//
+// Loading bar:
+// useClientMiddleware(async (url, next) => {
+//   NProgress.start()
+//   try   { await next() }
+//   finally { NProgress.done() }
+// })
 
 boot({
-  layout: RootLayout,
+  layout:          RootLayout,
   prefetchOnHover: true,
-  routes: [home, about],
+  routes:          [home, about${extraRoutes}],
 })
 `
 }
 
-function genRootLayout(): string {
-  return `import { defineLayout, use, ref } from '${pkg('core')}'
+// ── app/layouts.tsx ───────────────────────────────────────────────────────────
 
-const menuOpen = ref(false)
+function genRootLayout(template: Template): string {
+  const extraLinks = template === 'full'
+    ? `\n          <a href="/counter" class={\`nav-link\${url === '/counter' ? ' active' : ''}\`}>Counter</a>\n          <a href="/posts" class={\`nav-link\${url.startsWith('/posts') ? ' active' : ''}\`}>Posts</a>`
+    : ''
 
-export const RootLayout = defineLayout(function Layout({ children, url }) {
-  const open = use(menuOpen)
+  return `import { defineLayout } from '${pkg('core')}'
+import { createSignal } from 'solid-js'
 
+const [mobileOpen, setMobileOpen] = createSignal(false)
+
+export const RootLayout = defineLayout(function RootLayout({ children, url }) {
   return (
     <div class="app">
       <nav class="nav">
-        <a class="logo" href="/">⬡ FNetro</a>
-        <div class={\`nav-links \${open ? 'open' : ''}\`}>
+        <a href="/" class="logo">⬡ FNetro</a>
+        <div class={\`nav-links \${mobileOpen() ? 'open' : ''}\`}>
           <a href="/" class={\`nav-link\${url === '/' ? ' active' : ''}\`}>Home</a>
-          <a href="/about" class={\`nav-link\${url === '/about' ? ' active' : ''}\`}>About</a>
+          <a href="/about" class={\`nav-link\${url === '/about' ? ' active' : ''}\`}>About</a>${extraLinks}
         </div>
-        <button class="burger" onClick={() => { menuOpen.value = !open }}>
-          {open ? '✕' : '☰'}
+        <button class="burger" onClick={() => setMobileOpen(o => !o)} aria-label="Toggle menu">
+          {mobileOpen() ? '✕' : '☰'}
         </button>
       </nav>
       <main class="main">{children}</main>
-      <footer class="footer">Built with ⬡ FNetro</footer>
+      <footer class="footer">
+        Built with <a href="${CFG.DOCS_URL}" rel="external">⬡ FNetro</a>
+      </footer>
     </div>
   )
 })
 `
 }
 
+// ── app/routes/home.tsx ───────────────────────────────────────────────────────
+
 function genHomeRoute(): string {
   return `import { definePage } from '${pkg('core')}'
 
 export default definePage({
   path: '/',
-  loader: () => ({ message: 'Hello from FNetro!' }),
-  Page({ message }) {
+  seo: {
+    title:       'Home — FNetro',
+    description: 'Full-stack SolidJS + Hono framework with SSR, SPA, and SEO.',
+    ogTitle:     'FNetro — Home',
+  },
+  loader: () => ({
+    message:  'Hello from FNetro!',
+    features: [
+      '⚡ SolidJS v1.9 SSR + hydration',
+      '🔒 Type-safe loaders & page props',
+      '🔍 Full SEO — OG, Twitter, JSON-LD',
+      '🛡️  Server & client middleware',
+      '🚀 Node · Bun · Deno · Edge runtimes',
+    ],
+  }),
+  Page({ message, features }) {
     return (
       <div class="page">
         <h1>⬡ FNetro</h1>
-        <p>{message}</p>
-        <p>
+        <p class="lead">{message}</p>
+        <ul class="feature-list">
+          {features.map(f => <li key={f}>{f}</li>)}
+        </ul>
+        <p class="hint">
           Edit <code>app/routes/home.tsx</code> and save to see changes.
         </p>
-        <a href="/about">About →</a>
+        <a href="/about" class="btn">About →</a>
       </div>
     )
   },
 })
 `
 }
+
+// ── app/routes/about.tsx ──────────────────────────────────────────────────────
 
 function genAboutRoute(): string {
   return `import { definePage } from '${pkg('core')}'
 
 export default definePage({
   path: '/about',
-  loader: () => ({ version: '0.1.0' }),
+  seo: {
+    title:       'About — FNetro',
+    description: 'Learn about the FNetro framework — SolidJS + Hono.',
+  },
+  loader: () => ({ version: '0.2.0' }),
   Page({ version }) {
     return (
       <div class="page">
-        <h1>About</h1>
-        <p>FNetro v{version} — SSR + SPA + Vue-like reactivity on Hono.</p>
-        <a href="/">← Home</a>
+        <h1>About FNetro</h1>
+        <p>
+          FNetro v{version} is a full-stack framework built on{' '}
+          <a href="https://hono.dev" rel="external">Hono</a> and{' '}
+          <a href="https://solidjs.com" rel="external">SolidJS</a>.
+        </p>
+        <p>
+          It gives you server-side rendering, SPA navigation, fine-grained
+          reactivity, automatic SEO, and middleware at every level — all in a
+          tiny, TypeScript-first package.
+        </p>
+        <a href="/" class="btn">← Home</a>
       </div>
     )
   },
@@ -258,88 +329,207 @@ export default definePage({
 `
 }
 
+// ── app/routes/api.ts ─────────────────────────────────────────────────────────
+
 function genApiRoute(): string {
   return `import { defineApiRoute } from '${pkg('core')}'
 
 export const apiRoutes = defineApiRoute('/api', (app) => {
-  app.get('/health', (c) => c.json({ status: 'ok', ts: Date.now() }))
+  // Health check
+  app.get('/health', (c) =>
+    c.json({ status: 'ok', ts: Date.now(), version: '0.2.0' }),
+  )
 
+  // Echo endpoint
   app.get('/hello', (c) => {
     const name = c.req.query('name') ?? 'world'
     return c.json({ message: \`Hello, \${name}!\` })
+  })
+
+  // Post body example
+  app.post('/echo', async (c) => {
+    const body = await c.req.json().catch(() => null)
+    return c.json({ echo: body }, body ? 200 : 400)
   })
 })
 `
 }
 
+// ── public/style.css ──────────────────────────────────────────────────────────
+
 function genAppCss(): string {
-  return `*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, sans-serif; background: #0d0f14; color: #e8eaf2; line-height: 1.6; }
+  return `/* ── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { color-scheme: dark; }
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0d0f14;
+  color: #e8eaf2;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
 .app { display: flex; flex-direction: column; min-height: 100vh; }
-.nav { display: flex; align-items: center; gap: 1rem; padding: 0 1.5rem; height: 52px; background: #151820; border-bottom: 1px solid #2a2f3d; }
-.logo { font-weight: 700; color: #e8eaf2; text-decoration: none; }
-.nav-links { display: flex; gap: .25rem; flex: 1; }
-.nav-link { padding: .35rem .75rem; border-radius: 6px; color: #7b829a; text-decoration: none; }
-.nav-link:hover, .nav-link.active { color: #e8eaf2; background: #1d2130; }
-.burger { display: none; background: none; border: none; color: #e8eaf2; font-size: 1.1rem; cursor: pointer; }
-.main { flex: 1; max-width: 800px; width: 100%; margin: 0 auto; padding: 3rem 1.5rem; }
-.footer { text-align: center; padding: 1rem; color: #7b829a; font-size: .8rem; border-top: 1px solid #2a2f3d; }
-.page h1 { font-size: 2rem; font-weight: 700; margin-bottom: 1rem; }
+
+/* ── Navbar ─────────────────────────────────────────────────────────────── */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.5rem;
+  height: 54px;
+  background: #111318;
+  border-bottom: 1px solid #22263a;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.logo { font-weight: 700; font-size: 1.05rem; color: #e8eaf2; text-decoration: none; }
+.nav-links { display: flex; gap: 2px; flex: 1; }
+.nav-link {
+  padding: .35rem .7rem;
+  border-radius: 6px;
+  color: #7b829a;
+  text-decoration: none;
+  font-size: .9rem;
+  transition: color .15s, background .15s;
+}
+.nav-link:hover { color: #e8eaf2; background: #1a1e2a; }
+.nav-link.active { color: #e8eaf2; background: #1e2235; }
+.burger {
+  display: none;
+  background: none;
+  border: 1px solid #22263a;
+  color: #e8eaf2;
+  font-size: 1rem;
+  padding: .3rem .5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* ── Main ───────────────────────────────────────────────────────────────── */
+.main {
+  flex: 1;
+  max-width: 840px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.footer {
+  text-align: center;
+  padding: 1rem;
+  color: #555972;
+  font-size: .82rem;
+  border-top: 1px solid #22263a;
+}
+.footer a { color: #6b8cff; text-decoration: none; }
+.footer a:hover { text-decoration: underline; }
+
+/* ── Page typography ─────────────────────────────────────────────────────── */
+.page h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: .75rem; letter-spacing: -.02em; }
+.page .lead { font-size: 1.1rem; color: #9da3b8; margin-bottom: 1.5rem; }
+.page p { margin-bottom: .75rem; color: #b0b6cc; }
 .page a { color: #6b8cff; }
-code { background: #1d2130; padding: .1rem .4rem; border-radius: 4px; font-family: monospace; font-size: .9em; }
+.page a:hover { text-decoration: underline; }
+
+/* ── Feature list ────────────────────────────────────────────────────────── */
+.feature-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  margin-bottom: 1.75rem;
+}
+.feature-list li { color: #9da3b8; font-size: .95rem; }
+
+/* ── Button ─────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-block;
+  padding: .5rem 1.1rem;
+  border-radius: 8px;
+  background: #1e2235;
+  color: #e8eaf2;
+  text-decoration: none;
+  font-size: .9rem;
+  border: 1px solid #2a2f3d;
+  transition: background .15s, border-color .15s;
+}
+.btn:hover { background: #252a3e; border-color: #3a405a; }
+
+/* ── Hint ────────────────────────────────────────────────────────────────── */
+.hint { font-size: .88rem; color: #555972; margin-bottom: 1.25rem; }
+
+code {
+  background: #181b26;
+  color: #9da3b8;
+  padding: .15rem .4rem;
+  border-radius: 4px;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: .85em;
+  border: 1px solid #22263a;
+}
+
+/* ── Mobile ──────────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .nav-links { display: none; }
+  .nav-links.open {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 54px;
+    left: 0;
+    right: 0;
+    background: #111318;
+    padding: .5rem 1rem 1rem;
+    border-bottom: 1px solid #22263a;
+  }
+  .burger { display: block; margin-left: auto; }
+}
 `
 }
 
+// ── vite.config.ts ────────────────────────────────────────────────────────────
+
 function genViteConfig(runtime: Runtime): string {
-  // Adapter import line — each runtime has its own adapter for the dev server.
-  // Node uses the default export (no separate adapter package needed).
-  const adapterImport: Record<Runtime, string> = {
+  const adapterImports: Record<Runtime, string> = {
     node:       `import devServer from '@hono/vite-dev-server'`,
-    bun:        `import devServer, { defaultOptions } from '@hono/vite-dev-server'\nimport bunAdapter from '@hono/vite-dev-server/bun'`,
+    bun:        `import devServer from '@hono/vite-dev-server'\nimport bunAdapter from '@hono/vite-dev-server/bun'`,
     deno:       `import devServer from '@hono/vite-dev-server'\nimport denoAdapter from '@hono/vite-dev-server/deno'`,
-    cloudflare: ``,  // uses wrangler dev — no vite dev server
+    cloudflare: ``,
     generic:    `import devServer from '@hono/vite-dev-server'`,
   }
 
-  // devServer(...) plugin config — only for non-edge runtimes
-  const devServerPlugin: Record<Runtime, string> = {
-    node: `devServer({
-      entry: 'app.ts',  // default export must be a Hono instance (fnetro.app, not fnetro.handler)
-    }),`,
-    bun: `devServer({
-      adapter: bunAdapter,
-      entry: 'app.ts',  // default export must be a Hono instance (fnetro.app, not fnetro.handler)
-    }),`,
-    deno: `devServer({
-      adapter: denoAdapter,
-      entry: 'app.ts',  // default export must be a Hono instance (fnetro.app, not fnetro.handler)
-    }),`,
-    cloudflare: ``,
-    generic: `devServer({
-      entry: 'app.ts',  // default export must be a Hono instance (fnetro.app, not fnetro.handler)
-    }),`,
+  const devPlugins: Record<Runtime, string> = {
+    node:       `    // Dev: @hono/vite-dev-server routes requests through the FNetro app.\n    //      app.ts default export must be a Hono *instance* (fnetro.app), NOT fnetro.handler.\n    devServer({ entry: 'app.ts' }),`,
+    bun:        `    devServer({ adapter: bunAdapter, entry: 'app.ts' }),`,
+    deno:       `    devServer({ adapter: denoAdapter, entry: 'app.ts' }),`,
+    cloudflare: `    // Use 'wrangler dev' for local development with Cloudflare Workers.`,
+    generic:    `    devServer({ entry: 'app.ts' }),`,
   }
-
-  const isEdge = runtime === 'cloudflare' || runtime === 'generic'
-  const pluginLine = devServerPlugin[runtime]
-  const importLine = adapterImport[runtime]
 
   return `import { defineConfig } from 'vite'
 import { fnetroVitePlugin } from '${pkg('vite')}'
-${importLine ? importLine + '\n' : ''}
+${adapterImports[runtime] ? adapterImports[runtime] + '\n' : ''}
 export default defineConfig({
   plugins: [
-    // fnetroVitePlugin handles production builds (vite build):
-    //   - server bundle → dist/server/server.js
-    //   - client bundle → dist/assets/client.js
+    // fnetroVitePlugin:
+    //  - Applies vite-plugin-solid (SSR-aware JSX transform)
+    //  - 'vite build' → server bundle (dist/server/server.js) then
+    //                    client bundle (dist/assets/client-[hash].js + manifest.json)
     fnetroVitePlugin({
-      serverEntry: 'server.ts',
-      clientEntry: 'client.ts',${isEdge ? '\n      serverExternal: [],' : ''}
+      serverEntry:  'server.ts',
+      clientEntry:  'client.ts',
+      serverOutDir: 'dist/server',
+      clientOutDir: 'dist/assets',
     }),
-${pluginLine ? '    // @hono/vite-dev-server handles the dev workflow (vite):\n    //   - serves the FNetro app directly through Vite, no dist/ needed\n    //   - hot-reloads on source changes\n    ' + pluginLine + '\n' : ''}  ],
+${devPlugins[runtime]}
+  ],
   server: {
     watch: {
-      // Don't watch generated output — Vite handles it
+      // Don't watch the build output — Vite manages it
       ignored: ['**/dist/**'],
     },
   },
@@ -347,28 +537,24 @@ ${pluginLine ? '    // @hono/vite-dev-server handles the dev workflow (vite):\n 
 `
 }
 
+// ── package.json ──────────────────────────────────────────────────────────────
+
 function genPackageJson(name: string, runtime: Runtime): string {
-  // `dev` runs the FNetro app through @hono/vite-dev-server — no build step needed.
-  // `bun --bun vite` tells Bun to use its own runtime instead of Node for Vite.
-  const devCmd: Record<Runtime, string> = {
+  const devCmds: Record<Runtime, string> = {
     node:       'vite',
     bun:        'bun --bun vite --host',
     deno:       'deno run -A npm:vite',
     cloudflare: 'wrangler dev',
     generic:    'vite',
   }
-
-  // `build` produces dist/server/server.js + dist/assets/client.js
-  const buildCmd: Record<Runtime, string> = {
+  const buildCmds: Record<Runtime, string> = {
     node:       'vite build',
     bun:        'bun --bun vite build',
     deno:       'deno run -A npm:vite build',
     cloudflare: 'vite build',
     generic:    'vite build',
   }
-
-  // `start` runs the pre-built production server (not needed for edge runtimes)
-  const startCmd: Partial<Record<Runtime, string>> = {
+  const startCmds: Partial<Record<Runtime, string>> = {
     node:    'node dist/server/server.js',
     bun:     'bun dist/server/server.js',
     deno:    'deno run -A dist/server/server.js',
@@ -376,88 +562,105 @@ function genPackageJson(name: string, runtime: Runtime): string {
   }
 
   const scripts: Record<string, string> = {
-    dev:       devCmd[runtime],
-    build:     buildCmd[runtime],
+    dev:       devCmds[runtime],
+    build:     buildCmds[runtime],
     typecheck: 'tsc --noEmit',
-    ...(startCmd[runtime] ? { start: startCmd[runtime]! } : {}),
+    ...(startCmds[runtime] ? { start: startCmds[runtime]! } : {}),
     ...(runtime === 'cloudflare' ? { deploy: 'wrangler deploy' } : {}),
   }
 
-  const dependencies: Record<string, string> = {
+  const deps: Record<string, string> = {
     [CFG.FNETRO_PKG]: CFG.FNETRO_VERSION,
-    hono:           CFG.HONO_VERSION,
+    'solid-js':        CFG.SOLID_VERSION,
+    hono:              CFG.HONO_VERSION,
   }
 
-  const devDependencies: Record<string, string> = {
-    vite:                   CFG.VITE_VERSION,
-    typescript:             CFG.TS_VERSION,
+  const devDeps: Record<string, string> = {
+    vite:                    CFG.VITE_VERSION,
+    'vite-plugin-solid':     CFG.VITE_SOLID_VERSION,
+    typescript:              CFG.TS_VERSION,
     '@hono/vite-dev-server': CFG.HONO_VDS_VERSION,
   }
 
-  if (runtime === 'node')       devDependencies['@hono/node-server'] = CFG.HONO_NODE_VERSION
-  if (runtime === 'bun')        devDependencies['@types/bun']         = 'latest'
-  if (runtime === 'cloudflare') devDependencies['wrangler']           = CFG.WRANGLER_VERSION
+  if (runtime === 'node')       devDeps['@hono/node-server'] = CFG.HONO_NODE_VERSION
+  if (runtime === 'bun')        devDeps['@types/bun']        = 'latest'
+  if (runtime === 'cloudflare') devDeps['wrangler']          = CFG.WRANGLER_VERSION
 
   return JSON.stringify(
-    { name, version: '0.0.1', type: 'module', private: true, scripts, dependencies, devDependencies },
-    null, 2
+    { name, version: '0.0.1', type: 'module', private: true, scripts, dependencies: deps, devDependencies: devDeps },
+    null, 2,
   ) + '\n'
 }
+
+// ── tsconfig.json ─────────────────────────────────────────────────────────────
 
 function genTsConfig(): string {
-  return JSON.stringify(
-    {
-      compilerOptions: {
-        target:                     'ESNext',
-        module:                     'ESNext',
-        moduleResolution:           'bundler',
-        lib:                        ['ESNext', 'DOM'],
-        jsx:                        'react-jsx',
-        jsxImportSource:            'hono/jsx',
-        strict:                     true,
-        skipLibCheck:               true,
-        noEmit:                     true,
-        allowImportingTsExtensions: true,
-        resolveJsonModule:          true,
-        isolatedModules:            true,
-        verbatimModuleSyntax:       true,
-      },
-      include: ['**/*.ts', '**/*.tsx'],
-      exclude: ['node_modules', 'dist'],
+  return JSON.stringify({
+    compilerOptions: {
+      target:                     'ESNext',
+      module:                     'ESNext',
+      moduleResolution:           'bundler',
+      lib:                        ['ESNext', 'DOM'],
+      jsx:                        'preserve',
+      jsxImportSource:            'solid-js',
+      strict:                     true,
+      skipLibCheck:               true,
+      noEmit:                     true,
+      allowImportingTsExtensions: true,
+      resolveJsonModule:          true,
+      isolatedModules:            true,
+      verbatimModuleSyntax:       true,
+      forceConsistentCasingInFileNames: true,
     },
-    null, 2
-  ) + '\n'
+    include: ['**/*.ts', '**/*.tsx'],
+    exclude: ['node_modules', 'dist'],
+  }, null, 2) + '\n'
 }
+
+// ── .gitignore ────────────────────────────────────────────────────────────────
 
 function genGitignore(): string {
-  return ['node_modules', 'dist', '.env', '.env.local', '*.local', '.DS_Store', 'Thumbs.db', ''].join('\n')
+  return [
+    'node_modules', 'dist', '.env', '.env.local',
+    '*.local', '.DS_Store', 'Thumbs.db', '.wrangler', '',
+  ].join('\n')
 }
 
-function genEnvExample(): string {
-  return `# Copy this to .env and fill in your values\nPORT=${CFG.DEFAULT_PORT}\nNODE_ENV=development\n`
+// ── .env.example ──────────────────────────────────────────────────────────────
+
+function genEnvExample(runtime: Runtime): string {
+  const lines = [
+    '# Copy to .env and fill in values',
+    `PORT=${CFG.DEFAULT_PORT}`,
+    'NODE_ENV=development',
+  ]
+  if (runtime === 'cloudflare') lines.push('# Use wrangler.toml for Cloudflare config')
+  return lines.join('\n') + '\n'
 }
+
+// ── deno.json ─────────────────────────────────────────────────────────────────
 
 function genDenoJson(name: string): string {
-  return JSON.stringify(
-    {
-      name,
-      version: '0.0.1',
-      tasks: {
-        build: 'vite build',
-        start: 'deno run -A dist/server/server.js',
-        dev:   'deno run --watch -A dist/server/server.js',
-      },
-      imports: {
-        [CFG.FNETRO_PKG]: `npm:${CFG.FNETRO_PKG}@${CFG.FNETRO_VERSION}`,
-        hono:            `npm:hono@${CFG.HONO_VERSION}`,
-      },
+  return JSON.stringify({
+    name,
+    version: '0.0.1',
+    tasks: {
+      dev:   'vite',
+      build: 'vite build',
+      start: 'deno run -A dist/server/server.js',
     },
-    null, 2
-  ) + '\n'
+    imports: {
+      [CFG.FNETRO_PKG]: `npm:${CFG.FNETRO_PKG}@${CFG.FNETRO_VERSION}`,
+      'solid-js':         `npm:solid-js@${CFG.SOLID_VERSION}`,
+      hono:               `npm:hono@${CFG.HONO_VERSION}`,
+    },
+  }, null, 2) + '\n'
 }
 
+// ── wrangler.toml ─────────────────────────────────────────────────────────────
+
 function genWranglerToml(name: string): string {
-  return `name = "${name}"
+  return `name = "${name.replace(/[^a-z0-9-]/g, '-')}"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 main = "dist/server/server.js"
@@ -471,167 +674,22 @@ globs = ["**/*.js"]
 `
 }
 
-// ── Full template extras ──────────────────────────────────────────────────────
+// ── README.md ─────────────────────────────────────────────────────────────────
 
-function genStore(): string {
-  return `import { ref, reactive, computed } from '${pkg('core')}'
-
-export const theme = ref<'dark' | 'light'>('dark')
-export const toggleTheme = (): void => {
-  theme.value = theme.value === 'dark' ? 'light' : 'dark'
-}
-
-export interface CartItem {
-  id: string
-  name: string
-  qty: number
-  price: number
-}
-
-export const cart      = reactive<{ items: CartItem[] }>({ items: [] })
-export const cartCount = computed(() => cart.items.reduce((s, i) => s + i.qty, 0))
-export const cartTotal = computed(() => cart.items.reduce((s, i) => s + i.qty * i.price, 0))
-
-export function addToCart(item: Omit<CartItem, 'qty'>): void {
-  const existing = cart.items.find((i) => i.id === item.id)
-  if (existing) { existing.qty++; return }
-  cart.items.push({ ...item, qty: 1 })
-}
-
-export function removeFromCart(id: string): void {
-  cart.items = cart.items.filter((i) => i.id !== id)
-}
-`
-}
-
-function genCounterRoute(): string {
-  return `import { definePage, ref, computed, use } from '${pkg('core')}'
-
-// Module-level — value persists across SPA navigations
-const count   = ref(0)
-const doubled = computed(() => count.value * 2)
-
-export default definePage({
-  path: '/counter',
-  loader: () => ({}),
-  Page() {
-    const n = use(count)
-    const d = use(doubled)
-
-    return (
-      <div class="page">
-        <h1>Counter — {n}</h1>
-        <p>Doubled (computed): {d}</p>
-        <div style="display:flex;gap:.5rem;margin-top:1rem">
-          <button onClick={() => { count.value-- }}>−</button>
-          <button onClick={() => { count.value++ }}>+</button>
-          <button onClick={() => { count.value = 0 }}>reset</button>
-        </div>
-        <p style="margin-top:1rem;color:#7b829a;font-size:.875rem">
-          Navigate away and back — the count persists.
-        </p>
-      </div>
-    )
-  },
-})
-`
-}
-
-function genPostsIndexRoute(): string {
-  return `import { definePage } from '${pkg('core')}'
-
-interface PostSummary {
-  slug: string
-  title: string
-  date: string
-}
-
-const POSTS: PostSummary[] = [
-  { slug: 'hello-fnetro', title: 'Hello FNetro',       date: '2025-01-01' },
-  { slug: 'signals',    title: 'How signals work',  date: '2025-01-08' },
-]
-
-export default definePage({
-  path: '/posts',
-  loader: async (): Promise<{ posts: PostSummary[] }> => ({ posts: POSTS }),
-  Page({ posts }) {
-    return (
-      <div class="page">
-        <h1>Posts</h1>
-        <ul style="list-style:none;display:flex;flex-direction:column;gap:.5rem;margin-top:1rem">
-          {posts.map((p) => (
-            <li key={p.slug}>
-              <a href={\`/posts/\${p.slug}\`}>{p.title}</a>
-              <span style="color:#7b829a;font-size:.85rem"> — {p.date}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    )
-  },
-})
-`
-}
-
-function genPostDetailRoute(): string {
-  return `import { definePage } from '${pkg('core')}'
-
-interface Post {
-  title: string
-  body: string
-}
-
-const POSTS: Record<string, Post> = {
-  'hello-fnetro': {
-    title: 'Hello FNetro',
-    body:  'FNetro is a full-stack framework built on Hono — SSR, SPA, and Vue-like signals in 3 files.',
-  },
-  signals: {
-    title: 'How signals work',
-    body:  'Signals are reactive values that notify only the components subscribed to them — no virtual DOM diffing needed.',
-  },
-}
-
-export default definePage<{ post: Post | null; slug: string }>({
-  path: '/posts/[slug]',
-  loader: (c): { post: Post | null; slug: string } => {
-    const slug = (c.req as any).param('slug') as string
-    return { post: POSTS[slug] ?? null, slug }
-  },
-  Page({ post, slug }) {
-    if (!post) {
-      return (
-        <div class="page">
-          <h1>Post not found: {slug}</h1>
-          <a href="/posts">← Posts</a>
-        </div>
-      )
-    }
-    return (
-      <article class="page">
-        <a href="/posts">← Posts</a>
-        <h1 style="margin-top:.75rem">{post.title}</h1>
-        <p style="margin-top:1rem;line-height:1.8">{post.body}</p>
-      </article>
-    )
-  },
-})
-`
-}
-
-function genProjectReadme(a: Answers): string {
+function genReadme(a: Answers): string {
+  const pm = a.pkgManager
   const cmds: Record<PkgMgr, { install: string; dev: string; build: string; start: string }> = {
-    npm:  { install: 'npm install',  dev: 'npm run dev',    build: 'npm run build',   start: 'npm start' },
-    pnpm: { install: 'pnpm install', dev: 'pnpm dev',       build: 'pnpm build',      start: 'pnpm start' },
-    bun:  { install: 'bun install',  dev: 'bun run dev',    build: 'bun run build',   start: 'bun start' },
-    yarn: { install: 'yarn',         dev: 'yarn dev',       build: 'yarn build',      start: 'yarn start' },
-    deno: { install: 'deno install', dev: 'deno task dev',  build: 'deno task build', start: 'deno task start' },
+    npm:  { install: 'npm install',  dev: 'npm run dev',   build: 'npm run build',  start: 'npm start' },
+    pnpm: { install: 'pnpm install', dev: 'pnpm dev',      build: 'pnpm build',     start: 'pnpm start' },
+    bun:  { install: 'bun install',  dev: 'bun run dev',   build: 'bun run build',  start: 'bun start' },
+    yarn: { install: 'yarn',         dev: 'yarn dev',      build: 'yarn build',     start: 'yarn start' },
+    deno: { install: 'deno install', dev: 'deno task dev', build: 'deno task build',start: 'deno task start' },
   }
-  const { install, dev, build, start } = cmds[a.pkgManager]
+  const { install, dev, build, start } = cmds[pm]
 
   return `# ${a.projectName}
 
-A [FNetro](${CFG.DOCS_URL}) app — SSR + SPA + Vue-like reactivity on [Hono](https://hono.dev).
+A [FNetro](${CFG.DOCS_URL}) project — SolidJS SSR + SPA + SEO on [Hono](https://hono.dev).
 
 ## Development
 
@@ -640,7 +698,7 @@ ${install}
 ${dev}
 \`\`\`
 
-> \`dev\` starts \`@hono/vite-dev-server\` — your FNetro app runs inside Vite with hot-reload. No build step needed before starting.
+The dev server uses \`@hono/vite-dev-server\` — no build step needed. Edit files and see changes instantly.
 
 ## Production
 
@@ -652,165 +710,318 @@ ${start}
 ## Project structure
 
 \`\`\`
-server.ts            # Server entry — createFNetro() + serve()
-client.ts            # Client entry — boot()
+app.ts              # Shared app — used by dev server + server.ts
+server.ts           # Production entry — calls serve()
+client.ts           # Browser entry — calls boot()
 app/
-  layouts.tsx        # Root layout (nav, footer)
+  layouts.tsx       # Root layout (nav, footer)
   routes/
-    home.tsx         # GET /
-    about.tsx        # GET /about
-    api.ts           # GET /api/health, GET /api/hello
+    home.tsx        # GET /
+    about.tsx       # GET /about
+    api.ts          # GET /api/health, /api/hello
 public/
-assets/
-  style.css
+  style.css         # Global styles
 vite.config.ts
 tsconfig.json
 \`\`\`
 
-## Key FNetro APIs used
+## Key APIs
 
-| API | What it does |
+| API | Description |
 |---|---|
-| \`definePage\` | Route + SSR loader + Page component in one file |
-| \`defineLayout\` | Shared wrapper (nav, footer) rendered around every page |
-| \`defineApiRoute\` | Raw Hono routes — REST, RPC, WebSocket |
-| \`ref\` / \`use\` | Reactive value that persists across SPA navigations |
+| \`definePage({ path, loader, seo, Page })\` | Route + SSR data + SEO + component |
+| \`defineGroup({ prefix, middleware, routes })\` | Group routes under a prefix |
+| \`defineLayout(Component)\` | Shared layout (nav, footer) |
+| \`defineApiRoute(path, fn)\` | Raw Hono routes |
+| \`useClientMiddleware(fn)\` | Client navigation hooks |
+| \`createSignal\` / \`createMemo\` | SolidJS reactive primitives |
 
 ## Runtime
 
-**${a.runtime}** — see \`server.ts\` for the serve configuration.
+**${a.runtime}** — see \`server.ts\` for the configuration.
 
-## Learn more
+## Docs
 
-- Docs: ${CFG.DOCS_URL}
-- Hono: https://hono.dev
+${CFG.DOCS_URL}
 `
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 4  Scaffold — write all files to disk
+//  § 4  Full template — extra files
 // ══════════════════════════════════════════════════════════════════════════════
 
-function scaffold(dir: string, answers: Answers): void {
-  const { runtime, template } = answers
+function genStore(): string {
+  return `// app/store.ts — module-level shared state (persists across SPA navigations)
+import { createSignal, createMemo } from 'solid-js'
+import { createStore, produce } from 'solid-js/store'
 
-  // Core directories
+// ── Theme ──────────────────────────────────────────────────────────────────
+export const [theme, setTheme] = createSignal<'dark' | 'light'>('dark')
+export const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
+
+// ── Cart ───────────────────────────────────────────────────────────────────
+export interface CartItem { id: string; name: string; qty: number; price: number }
+
+export const [cart, setCart] = createStore<{ items: CartItem[] }>({ items: [] })
+export const cartCount = createMemo(() => cart.items.reduce((s, i) => s + i.qty, 0))
+export const cartTotal = createMemo(() => cart.items.reduce((s, i) => s + i.qty * i.price, 0))
+
+export function addToCart(item: Omit<CartItem, 'qty'>): void {
+  const idx = cart.items.findIndex(i => i.id === item.id)
+  if (idx >= 0) setCart('items', idx, produce(i => { i.qty++ }))
+  else          setCart('items', l => [...l, { ...item, qty: 1 }])
+}
+
+export function removeFromCart(id: string): void {
+  setCart('items', items => items.filter(i => i.id !== id))
+}
+
+export function clearCart(): void {
+  setCart('items', [])
+}
+`
+}
+
+function genCounterRoute(): string {
+  return `import { definePage } from '${pkg('core')}'
+import { createSignal, createMemo } from 'solid-js'
+
+// Module-level — persists across SPA navigations
+const [count, setCount] = createSignal(0)
+const doubled  = createMemo(() => count() * 2)
+const isEven   = createMemo(() => count() % 2 === 0)
+
+export default definePage({
+  path: '/counter',
+  seo: { title: 'Counter — FNetro', description: 'SolidJS signals demo.' },
+  Page() {
+    return (
+      <div class="page">
+        <h1>Counter</h1>
+        <p class="lead">
+          Count: <strong>{count()}</strong> — Doubled: <strong>{doubled()}</strong>
+        </p>
+        <p>The number is {isEven() ? 'even' : 'odd'}.</p>
+        <div style={{ display: 'flex', gap: '.5rem', 'margin-top': '1.5rem' }}>
+          <button class="btn" onClick={() => setCount(n => n - 1)}>−</button>
+          <button class="btn" onClick={() => setCount(n => n + 1)}>+</button>
+          <button class="btn" onClick={() => setCount(0)}>Reset</button>
+        </div>
+        <p class="hint" style={{ 'margin-top': '1.25rem' }}>
+          Navigate away and back — the count persists (module-level signal).
+        </p>
+      </div>
+    )
+  },
+})
+`
+}
+
+function genPostsIndexRoute(): string {
+  return `import { definePage } from '${pkg('core')}'
+import { For } from 'solid-js'
+
+interface PostSummary { slug: string; title: string; date: string; excerpt: string }
+
+const POSTS: PostSummary[] = [
+  { slug: 'hello-fnetro',   title: 'Hello FNetro',      date: '2025-01-01', excerpt: 'Getting started with the FNetro framework.' },
+  { slug: 'solidjs-primer', title: 'SolidJS Primer',    date: '2025-01-08', excerpt: 'Fine-grained reactivity without a virtual DOM.' },
+  { slug: 'seo-tips',       title: 'SEO with FNetro',   date: '2025-01-15', excerpt: 'Automatic OG, Twitter cards, and JSON-LD.' },
+]
+
+export default definePage({
+  path: '/posts',
+  seo: {
+    title:       'Posts — FNetro',
+    description: 'Articles about FNetro, SolidJS, and full-stack development.',
+  },
+  loader: async (): Promise<{ posts: PostSummary[] }> => ({ posts: POSTS }),
+  Page({ posts }) {
+    return (
+      <div class="page">
+        <h1>Posts</h1>
+        <ul class="post-list" style={{ 'list-style': 'none', 'margin-top': '1.5rem' }}>
+          <For each={posts}>
+            {post => (
+              <li style={{ 'margin-bottom': '1.5rem' }}>
+                <a href={\`/posts/\${post.slug}\`} style={{ 'font-size': '1.1rem', 'font-weight': '600' }}>
+                  {post.title}
+                </a>
+                <p style={{ color: '#555972', 'font-size': '.82rem', margin: '.15rem 0 .35rem' }}>
+                  {post.date}
+                </p>
+                <p style={{ color: '#9da3b8', 'font-size': '.92rem' }}>{post.excerpt}</p>
+              </li>
+            )}
+          </For>
+        </ul>
+      </div>
+    )
+  },
+})
+`
+}
+
+function genPostDetailRoute(): string {
+  return `import { definePage } from '${pkg('core')}'
+import { Show } from 'solid-js'
+
+interface Post { title: string; body: string; date: string; author: string }
+
+const POSTS: Record<string, Post> = {
+  'hello-fnetro': {
+    title:  'Hello FNetro',
+    date:   '2025-01-01',
+    author: 'Netro Team',
+    body:   'FNetro is a full-stack framework built on Hono and SolidJS. It provides SSR, SPA navigation, automatic SEO, and middleware at every level — all in a tiny, TypeScript-first package.',
+  },
+  'solidjs-primer': {
+    title:  'SolidJS Primer',
+    date:   '2025-01-08',
+    author: 'Netro Team',
+    body:   'SolidJS achieves fine-grained reactivity by compiling JSX to direct DOM updates. Unlike React, there is no virtual DOM and no reconciliation. Signals update only the exact DOM nodes that depend on them.',
+  },
+  'seo-tips': {
+    title:  'SEO with FNetro',
+    date:   '2025-01-15',
+    author: 'Netro Team',
+    body:   'Every FNetro page can declare a seo property with title, description, Open Graph, Twitter cards, and JSON-LD structured data. On SPA navigation, all meta tags update automatically.',
+  },
+}
+
+export default definePage<{ post: Post | null; slug: string }>({
+  path: '/posts/[slug]',
+  seo: (data, params) => ({
+    title:       data.post ? \`\${data.post.title} — FNetro\` : 'Post not found',
+    description: data.post?.body.slice(0, 160),
+    ogType:      'article',
+  }),
+  loader: (c): { post: Post | null; slug: string } => {
+    const slug = (c.req as any).param('slug') as string
+    return { post: POSTS[slug] ?? null, slug }
+  },
+  Page({ post, slug }) {
+    return (
+      <Show
+        when={post}
+        fallback={
+          <div class="page">
+            <h1>Post not found</h1>
+            <p>No post with slug <code>{slug}</code> exists.</p>
+            <a href="/posts" class="btn">← All posts</a>
+          </div>
+        }
+      >
+        {(p) => (
+          <article class="page">
+            <a href="/posts" class="btn" style={{ 'margin-bottom': '1.5rem', display: 'inline-block' }}>← Posts</a>
+            <h1>{p().title}</h1>
+            <p style={{ color: '#555972', 'font-size': '.85rem', margin: '.4rem 0 1.25rem' }}>
+              {p().date} · {p().author}
+            </p>
+            <p style={{ 'line-height': '1.8', color: '#b0b6cc' }}>{p().body}</p>
+          </article>
+        )}
+      </Show>
+    )
+  },
+})
+`
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 5  Scaffold — assemble all files
+// ══════════════════════════════════════════════════════════════════════════════
+
+function scaffold(dir: string, a: Answers): void {
+  const { runtime, template } = a
+
+  // Create directories
   mkdirSync(join(dir, 'app/routes'), { recursive: true })
   mkdirSync(join(dir, 'app/components'), { recursive: true })
   mkdirSync(join(dir, 'public'), { recursive: true })
-  mkdirSync(join(dir, 'assets'), { recursive: true })
 
   // Root config files
-  writeFile(join(dir, 'package.json'),   genPackageJson(answers.projectName, runtime))
-  writeFile(join(dir, 'tsconfig.json'),  genTsConfig())
-  writeFile(join(dir, 'vite.config.ts'), genViteConfig(runtime))
-  writeFile(join(dir, '.gitignore'),     genGitignore())
-  writeFile(join(dir, '.env.example'),   genEnvExample())
+  write(join(dir, 'package.json'),   genPackageJson(a.projectName, runtime))
+  write(join(dir, 'tsconfig.json'),  genTsConfig())
+  write(join(dir, 'vite.config.ts'), genViteConfig(runtime))
+  write(join(dir, '.gitignore'),     genGitignore())
+  write(join(dir, '.env.example'),   genEnvExample(runtime))
 
-  // Runtime-specific config files
-  if (runtime === 'deno')       writeFile(join(dir, 'deno.json'),     genDenoJson(answers.projectName))
-  if (runtime === 'cloudflare') writeFile(join(dir, 'wrangler.toml'), genWranglerToml(answers.projectName))
+  // Runtime-specific extras
+  if (runtime === 'deno')       write(join(dir, 'deno.json'),     genDenoJson(a.projectName))
+  if (runtime === 'cloudflare') write(join(dir, 'wrangler.toml'), genWranglerToml(a.projectName))
 
-  // App entry points
-  // app.ts  — shared FNetro app + handler export (used by dev server AND server.ts)
-  // server.ts — production serve() call (not imported by dev server)
-  // client.ts — browser SPA boot (intercepted clicks, prefetch, navigation)
-  writeFile(join(dir, 'app.ts'),    genAppEntry())
-  writeFile(join(dir, 'server.ts'), genServerEntry(runtime))
-  writeFile(join(dir, 'client.ts'), genClientEntry())
+  // Entry points
+  write(join(dir, 'app.ts'),    genAppEntry(template))
+  write(join(dir, 'server.ts'), genServerEntry(runtime))
+  write(join(dir, 'client.ts'), genClientEntry(template))
 
-  // Shared app files
-  writeFile(join(dir, 'app/layouts.tsx'),      genRootLayout())
-  writeFile(join(dir, 'app/routes/home.tsx'),  genHomeRoute())
-  writeFile(join(dir, 'app/routes/about.tsx'), genAboutRoute())
-  writeFile(join(dir, 'app/routes/api.ts'),    genApiRoute())
-  writeFile(join(dir, 'assets/style.css'),     genAppCss())
+  // App files (minimal)
+  write(join(dir, 'app/layouts.tsx'),      genRootLayout(template))
+  write(join(dir, 'app/routes/home.tsx'),  genHomeRoute())
+  write(join(dir, 'app/routes/about.tsx'), genAboutRoute())
+  write(join(dir, 'app/routes/api.ts'),    genApiRoute())
+  write(join(dir, 'public/style.css'),     genAppCss())
 
   // Full template extras
   if (template === 'full') {
-    writeFile(join(dir, 'app/store.ts'),                genStore())
-    writeFile(join(dir, 'app/routes/counter.tsx'),      genCounterRoute())
-    writeFile(join(dir, 'app/routes/posts/index.tsx'),  genPostsIndexRoute())
-    writeFile(join(dir, 'app/routes/posts/[slug].tsx'), genPostDetailRoute())
+    write(join(dir, 'app/store.ts'),                       genStore())
+    write(join(dir, 'app/routes/counter.tsx'),             genCounterRoute())
+    write(join(dir, 'app/routes/posts/index.tsx'),         genPostsIndexRoute())
+    write(join(dir, 'app/routes/posts/[slug].tsx'),        genPostDetailRoute())
   }
 
-  // Project README
-  writeFile(join(dir, 'README.md'), genProjectReadme(answers))
+  write(join(dir, 'README.md'), genReadme(a))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 5  Install & git helpers
+//  § 6  Install / git helpers
 // ══════════════════════════════════════════════════════════════════════════════
 
-const INSTALL_CMD: Record<PkgMgr, string> = {
-  npm:  'npm install',
-  pnpm: 'pnpm install',
-  bun:  'bun install',
-  yarn: 'yarn',
-  deno: 'deno install',
+const INSTALL: Record<PkgMgr, string> = {
+  npm: 'npm install', pnpm: 'pnpm install', bun: 'bun install', yarn: 'yarn', deno: 'deno install',
 }
-
-// `dev` starts @hono/vite-dev-server — no pre-build needed.
-const DEV_CMD: Record<PkgMgr, string> = {
-  npm:  'npm run dev',
-  pnpm: 'pnpm dev',
-  bun:  'bun run dev',
-  yarn: 'yarn dev',
-  deno: 'deno task dev',
+const DEV: Record<PkgMgr, string> = {
+  npm: 'npm run dev', pnpm: 'pnpm dev', bun: 'bun run dev', yarn: 'yarn dev', deno: 'deno task dev',
 }
-
-const BUILD_CMD: Record<PkgMgr, string> = {
-  npm:  'npm run build',
-  pnpm: 'pnpm build',
-  bun:  'bun run build',
-  yarn: 'yarn build',
-  deno: 'deno task build',
+const BUILD: Record<PkgMgr, string> = {
+  npm: 'npm run build', pnpm: 'pnpm build', bun: 'bun run build', yarn: 'yarn build', deno: 'deno task build',
 }
-
-const START_CMD: Record<PkgMgr, string> = {
-  npm:  'npm start',
-  pnpm: 'pnpm start',
-  bun:  'bun start',
-  yarn: 'yarn start',
-  deno: 'deno task start',
+const START: Record<PkgMgr, string> = {
+  npm: 'npm start', pnpm: 'pnpm start', bun: 'bun start', yarn: 'yarn start', deno: 'deno task start',
 }
 
 function runInstall(mgr: PkgMgr, dir: string): void {
-  execSync(INSTALL_CMD[mgr], { cwd: dir, stdio: 'inherit' })
+  execSync(INSTALL[mgr], { cwd: dir, stdio: 'inherit' })
 }
 
 function runGitInit(dir: string): void {
-  execSync('git init',                                { cwd: dir, stdio: 'inherit' })
-  execSync('git add -A',                              { cwd: dir, stdio: 'inherit' })
-  execSync(`git commit -m "${CFG.GIT_INIT_COMMIT}"`, { cwd: dir, stdio: 'inherit' })
+  execSync('git init',                              { cwd: dir, stdio: 'inherit' })
+  execSync('git add -A',                            { cwd: dir, stdio: 'inherit' })
+  execSync(`git commit -m "${CFG.GIT_COMMIT}"`,     { cwd: dir, stdio: 'inherit' })
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  § 6  Next-steps display
-// ══════════════════════════════════════════════════════════════════════════════
-
-function printNextSteps(projectName: string, answers: Answers): void {
-  const inCurrentDir = projectName === '.'
-  const lines: string[] = ['', '  Next steps:']
-
-  if (!inCurrentDir)        lines.push(`    ${cyan('cd')} ${projectName}`)
-  if (!answers.installDeps) lines.push(`    ${cyan(INSTALL_CMD[answers.pkgManager])}`)
-
-  // Show dev (watch + auto-restart) as the primary workflow.
-  // For production: build → start.
-  lines.push(`    ${cyan(DEV_CMD[answers.pkgManager])}    ${dim('# starts dev server — no build step needed')}`)
-  lines.push('')
-  lines.push(`  ${dim('Production:')}`)
-  lines.push(`    ${cyan(BUILD_CMD[answers.pkgManager])} && ${cyan(START_CMD[answers.pkgManager])}`)
-  lines.push('')
-  lines.push(`  Docs: ${cyan(CFG.DOCS_URL)}`)
-  lines.push('')
-
+function printNextSteps(name: string, a: Answers): void {
+  const inCwd = name === '.'
+  const lines = [
+    '',
+    '  ' + green('Next steps:'),
+    ...(inCwd ? [] : [`    ${cyan('cd')} ${name}`]),
+    ...(a.installDeps ? [] : [`    ${cyan(INSTALL[a.pkgManager])}`]),
+    `    ${cyan(DEV[a.pkgManager])}  ${dim('← starts dev server (no build needed)')}`,
+    '',
+    `  ${dim('Production:')}`,
+    `    ${cyan(BUILD[a.pkgManager])} ${dim('&&')} ${cyan(START[a.pkgManager])}`,
+    '',
+    `  ${dim('Docs:')} ${cyan(CFG.DOCS_URL)}`,
+    '',
+  ]
   console.log(lines.join('\n'))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 7  CLI flag parser — used for --ci mode
+//  § 7  CLI flags
 // ══════════════════════════════════════════════════════════════════════════════
 
 interface CliFlags {
@@ -823,25 +1034,19 @@ interface CliFlags {
 }
 
 function parseFlags(argv: string[]): CliFlags {
-  const get = (flag: string): string | undefined => {
-    const idx = argv.indexOf(flag)
-    return idx !== -1 ? argv[idx + 1] : undefined
-  }
-  const has = (flag: string): boolean => argv.includes(flag)
-
+  const get = (f: string) => { const i = argv.indexOf(f); return i !== -1 ? argv[i + 1] : undefined }
+  const has = (f: string) => argv.includes(f)
   const RUNTIMES:  Runtime[]  = ['node', 'bun', 'deno', 'cloudflare', 'generic']
   const TEMPLATES: Template[] = ['minimal', 'full']
   const MANAGERS:  PkgMgr[]   = ['npm', 'pnpm', 'yarn', 'bun', 'deno']
-
-  const runtimeArg    = get('--runtime')    as Runtime  | undefined
-  const templateArg   = get('--template')   as Template | undefined
-  const pkgManagerArg = (get('--pkg-manager') ?? get('--pkgManager')) as PkgMgr | undefined
-
+  const r  = get('--runtime')    as Runtime  | undefined
+  const t  = get('--template')   as Template | undefined
+  const pm = (get('--pkg-manager') ?? get('--pkgManager')) as PkgMgr | undefined
   return {
     ci:         has('--ci') || process.env['CI'] === 'true',
-    runtime:    runtimeArg    && RUNTIMES.includes(runtimeArg)    ? runtimeArg    : undefined,
-    template:   templateArg   && TEMPLATES.includes(templateArg)  ? templateArg   : undefined,
-    pkgManager: pkgManagerArg && MANAGERS.includes(pkgManagerArg as PkgMgr) ? pkgManagerArg : undefined,
+    runtime:    r  && RUNTIMES.includes(r)   ? r  : undefined,
+    template:   t  && TEMPLATES.includes(t)  ? t  : undefined,
+    pkgManager: pm && MANAGERS.includes(pm)  ? pm : undefined,
     noInstall:  has('--no-install'),
     noGit:      has('--no-git'),
   }
@@ -855,51 +1060,39 @@ async function main(): Promise<void> {
   banner()
 
   const argv    = process.argv.slice(2)
-  const argName = argv.find((a) => !a.startsWith('--'))
+  const argName = argv.find(a => !a.startsWith('-'))
   const flags   = parseFlags(argv)
 
-  // ── CI / non-interactive mode ──────────────────────────────────────────────
-  // Activated by --ci flag or CI=true env var. Skips all prompts and uses
-  // flag values with sensible defaults. Used by GitHub Actions scaffold test.
+  // ── CI / non-interactive ───────────────────────────────────────────────────
   if (flags.ci) {
-    const projectName = argName ?? 'my-fnetro-app'
-    const ciAnswers: Answers = {
-      projectName,
-      runtime:    flags.runtime    ?? 'node',
-      template:   flags.template   ?? 'minimal',
-      pkgManager: flags.pkgManager ?? 'npm',
+    const name = argName ?? 'my-fnetro-app'
+    const a: Answers = {
+      projectName: name,
+      runtime:     flags.runtime    ?? 'node',
+      template:    flags.template   ?? 'minimal',
+      pkgManager:  flags.pkgManager ?? 'npm',
       installDeps: !flags.noInstall,
       gitInit:     !flags.noGit,
     }
-
-    const projectDir = resolve(process.cwd(), projectName)
-    mkdirSync(projectDir, { recursive: true })
-
-    console.log(`  Scaffolding ${bold(cyan(projectName))} [CI mode]…`)
-    console.log()
-    scaffold(projectDir, ciAnswers)
-
-    if (ciAnswers.installDeps) {
-      console.log(`  Installing with ${bold(ciAnswers.pkgManager)}…\n`)
-      try { runInstall(ciAnswers.pkgManager, projectDir) }
+    const dir = resolve(process.cwd(), name)
+    mkdirSync(dir, { recursive: true })
+    console.log(`  Scaffolding ${bold(cyan(name))} [CI]…\n`)
+    scaffold(dir, a)
+    if (a.installDeps) {
+      try   { runInstall(a.pkgManager, dir) }
       catch { console.log(yellow('\n  Install failed — run it manually.\n')) }
     }
-
-    if (ciAnswers.gitInit) {
-      try { runGitInit(projectDir) } catch { /* git not available */ }
-    }
-
+    if (a.gitInit) { try { runGitInit(dir) } catch { /* git not available */ } }
     console.log(green('  Done! 🎉'))
-    printNextSteps(projectName, ciAnswers)
+    printNextSteps(name, a)
     return
   }
 
-  // ── Interactive mode ───────────────────────────────────────────────────────
+  // ── Interactive ────────────────────────────────────────────────────────────
   let cancelled = false
 
   const answers = await prompts(
     [
-      // ── Project name ───────────────────────────────────────────────────────
       {
         type:     'text',
         name:     'projectName',
@@ -907,78 +1100,58 @@ async function main(): Promise<void> {
         initial:  argName ?? 'my-fnetro-app',
         validate: validateName,
       },
-
-      // ── Overwrite guard ────────────────────────────────────────────────────
       {
         type: (prev: string) => {
-          const dir = resolve(process.cwd(), prev)
-          return existsSync(dir) && !isDirEmpty(dir)
-            ? 'confirm'
-            : (null as unknown as 'confirm')
+          const d = resolve(process.cwd(), prev)
+          return existsSync(d) && !isDirEmpty(d) ? 'confirm' : (null as unknown as 'confirm')
         },
         name:    'overwrite',
-        message: (prev: string) =>
-          `${yellow('!')} "${prev}" is not empty. Overwrite?`,
+        message: (prev: string) => `${yellow('!')} "${prev}" is not empty. Overwrite?`,
         initial: false,
       },
       {
-        type: (_: unknown, values: Partial<Answers & { overwrite: boolean }>) => {
-          if (values.overwrite === false) cancelled = true
+        type: (_: unknown, v: Partial<Answers & { overwrite: boolean }>) => {
+          if (v.overwrite === false) cancelled = true
           return null as unknown as 'text'
         },
-        name:    '_guard',
-        message: '',
+        name: '_guard', message: '',
       },
-
-      // ── Runtime ────────────────────────────────────────────────────────────
       {
         type:    'select',
         name:    'runtime',
         message: 'Target runtime:',
         choices: [
-          { title: `${green('Node.js')}            ${dim('@hono/node-server')}`,       value: 'node' },
-          { title: `${magenta('Bun')}              ${dim('Bun.serve, fast startup')}`, value: 'bun' },
-          { title: `${cyan('Deno')}             ${dim('Deno.serve, permissions')}`,   value: 'deno' },
-          { title: `${yellow('Cloudflare Workers')} ${dim('edge, wrangler')}`,         value: 'cloudflare' },
-          { title: `${dim('Generic')}            ${dim('WinterCG, export handler')}`, value: 'generic' },
+          { title: `${green('Node.js')}            ${dim('@hono/node-server')}`,         value: 'node' },
+          { title: `${magenta('Bun')}              ${dim('Bun.serve — fast startup')}`,  value: 'bun' },
+          { title: `${blue('Deno')}             ${dim('Deno.serve — permissions')}`,     value: 'deno' },
+          { title: `${yellow('Cloudflare Workers')} ${dim('edge — wrangler')}`,           value: 'cloudflare' },
+          { title: `${dim('Generic WinterCG')}    ${dim('export handler')}`,             value: 'generic' },
         ],
       },
-
-      // ── Template ───────────────────────────────────────────────────────────
       {
         type:    'select',
         name:    'template',
         message: 'Template:',
         choices: [
-          {
-            title: `${green('Minimal')}  ${dim('Home + About + /api/health')}`,
-            value: 'minimal',
-          },
-          {
-            title: `${cyan('Full')}     ${dim('+ Counter (signals) + Posts [slug] + store')}`,
-            value: 'full',
-          },
+          { title: `${green('Minimal')}  ${dim('Home · About · /api/health')}`,                         value: 'minimal' },
+          { title: `${cyan('Full')}     ${dim('+ Counter (signals) · Posts [slug] · store.ts')}`,       value: 'full' },
         ],
       },
-
-      // ── Package manager ────────────────────────────────────────────────────
       {
         type:    'select',
         name:    'pkgManager',
         message: 'Package manager:',
-        choices: (_: unknown, values: Partial<Answers>) => {
+        choices: (_: unknown, v: Partial<Answers>) => {
           const base = [
             { title: 'npm',  value: 'npm' },
             { title: 'pnpm', value: 'pnpm' },
             { title: 'yarn', value: 'yarn' },
           ]
-          if (values.runtime === 'bun')  return [{ title: 'bun',  value: 'bun'  }, ...base]
-          if (values.runtime === 'deno') return [{ title: 'deno', value: 'deno' }, ...base]
+          if (v.runtime === 'bun')  return [{ title: 'bun',  value: 'bun' },  ...base]
+          if (v.runtime === 'deno') return [{ title: 'deno', value: 'deno' }, ...base]
           return base
         },
       },
-
-      // ── Install + git ──────────────────────────────────────────────────────
       {
         type:    'confirm',
         name:    'installDeps',
@@ -1000,37 +1173,30 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  const typedAnswers = answers as Answers
-  const projectDir   = resolve(process.cwd(), typedAnswers.projectName)
-
-  mkdirSync(projectDir, { recursive: true })
+  const a   = answers as Answers
+  const dir = resolve(process.cwd(), a.projectName)
+  mkdirSync(dir, { recursive: true })
 
   console.log()
-  console.log(`  Scaffolding ${bold(cyan(typedAnswers.projectName))}…`)
+  console.log(`  Scaffolding ${bold(cyan(a.projectName))}…`)
   console.log()
 
-  scaffold(projectDir, typedAnswers)
+  scaffold(dir, a)
 
-  if (typedAnswers.installDeps) {
-    console.log(`  Installing with ${bold(typedAnswers.pkgManager)}…\n`)
-    try {
-      runInstall(typedAnswers.pkgManager, projectDir)
-    } catch {
-      console.log(yellow('\n  Install failed — run it manually.\n'))
-    }
+  if (a.installDeps) {
+    console.log(`  Installing with ${bold(a.pkgManager)}…\n`)
+    try   { runInstall(a.pkgManager, dir) }
+    catch { console.log(yellow('\n  Install failed — run it manually.\n')) }
   }
 
-  if (typedAnswers.gitInit) {
-    try { runGitInit(projectDir) } catch { /* git not available */ }
-  }
+  if (a.gitInit) { try { runGitInit(dir) } catch { /* git not available */ } }
 
   console.log()
-  console.log(green('  Done! 🎉'))
-  printNextSteps(typedAnswers.projectName, typedAnswers)
+  console.log(`  ${green('Done!')} 🎉`)
+  printNextSteps(a.projectName, a)
 }
 
 main().catch((e: unknown) => {
-  const msg = e instanceof Error ? e.message : String(e)
-  console.error(red(`\n  Error: ${msg}\n`))
+  console.error(red(`\n  Error: ${e instanceof Error ? e.message : String(e)}\n`))
   process.exit(1)
 })

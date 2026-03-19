@@ -2,8 +2,8 @@
 
 > Full-stack [Hono](https://hono.dev) framework — SSR, SPA, Vue-like reactivity, route groups, middleware and raw API routes in **3 files**.
 
-[![npm](https://img.shields.io/npm/v/@netrojs/fnetro?color=6b8cff&label=fnetro)](https://www.npmjs.com/package/@netrojs/fnetro)
-[![npm](https://img.shields.io/npm/v/@netrojs/create-fnetro?color=3ecf8e&label=create-fnetro)](https://www.npmjs.com/package/@netrojs/create-fnetro)
+[![npm](https://img.shields.io/npm/v/fnetro?color=6b8cff&label=fnetro)](https://www.npmjs.com/package/fnetro)
+[![npm](https://img.shields.io/npm/v/create-fnetro?color=3ecf8e&label=create-fnetro)](https://www.npmjs.com/package/create-fnetro)
 [![CI](https://github.com/netrosolutions/fnetro/actions/workflows/ci.yml/badge.svg)](https://github.com/netrosolutions/fnetro/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
@@ -55,13 +55,13 @@
 
 ```bash
 # npm
-npm create @netrojs/fnetro@latest
+npm create fnetro@latest
 
 # bun
-bun x @netrojs/create-fnetro
+bun x create-fnetro
 
 # pnpm
-pnpm create @netrojs/fnetro@latest
+pnpm create fnetro@latest
 ```
 
 The CLI will prompt for your project name, runtime (Node / Bun / Deno / Cloudflare / generic), template, and package manager, then scaffold a ready-to-run app.
@@ -75,7 +75,7 @@ bun run dev        # dev server — no build step required
 **Manual install:**
 
 ```bash
-npm install @netrojs/fnetro hono
+npm install fnetro hono
 npm install -D vite typescript @hono/vite-dev-server
 # Node.js only:
 npm install -D @hono/node-server
@@ -149,7 +149,7 @@ my-app/
 
 ```ts
 // app.ts
-import { createFNetro } from '@netrojs/fnetro/server'
+import { createFNetro } from 'fnetro/server'
 import { RootLayout } from './app/layouts'
 import home from './app/routes/home'
 
@@ -159,7 +159,7 @@ export default fnetro.handler  // consumed by @hono/vite-dev-server in dev
 
 ```ts
 // server.ts — production only
-import { serve } from '@netrojs/fnetro/server'
+import { serve } from 'fnetro/server'
 import { fnetro } from './app'
 await serve({ app: fnetro, port: 3000 })
 ```
@@ -174,7 +174,7 @@ A page is a path + optional server loader + JSX component. Everything in one fil
 
 ```tsx
 // app/routes/post.tsx
-import { definePage, ref, use } from '@netrojs/fnetro/core'
+import { definePage, ref, use } from 'fnetro/core'
 
 // Module-level signal — value persists across SPA navigations
 const viewCount = ref(0)
@@ -221,7 +221,7 @@ Props available in every `Page`:
 Groups nest routes under a prefix, sharing a layout and middleware chain.
 
 ```tsx
-import { defineGroup, definePage } from '@netrojs/fnetro/core'
+import { defineGroup, definePage } from 'fnetro/core'
 import { AdminLayout } from '../layouts'
 import { requireAuth, auditLog } from '../middleware'
 
@@ -264,7 +264,7 @@ A layout wraps pages with shared chrome — nav, footer, theme, auth state.
 
 ```tsx
 // app/layouts.tsx
-import { defineLayout, use, ref } from '@netrojs/fnetro/core'
+import { defineLayout, use, ref } from 'fnetro/core'
 import { theme, toggleTheme } from './store'
 
 export const RootLayout = defineLayout(function Layout({ children, url, params }) {
@@ -304,7 +304,7 @@ Mount raw Hono routes at any path. Full Hono API: routing, middleware, validator
 
 ```tsx
 // app/routes/api.ts
-import { defineApiRoute } from '@netrojs/fnetro/core'
+import { defineApiRoute } from 'fnetro/core'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 
@@ -342,7 +342,7 @@ Works at app, group, or page level. Receives the Hono `Context` and a `next` fun
 
 ```ts
 // app/middleware/auth.ts
-import { defineMiddleware } from '@netrojs/fnetro/core'
+import { defineMiddleware } from 'fnetro/core'
 
 export const requireAuth = defineMiddleware(async (c, next) => {
   const token = c.req.header('Authorization')?.replace('Bearer ', '')
@@ -395,7 +395,7 @@ FNetro implements the complete Vue Reactivity API from scratch (~500 lines, no e
 A reactive container for any value. Read with `.value`, write with `.value =`.
 
 ```ts
-import { ref } from '@netrojs/fnetro/core'
+import { ref } from 'fnetro/core'
 
 const count = ref(0)
 count.value++         // triggers all watchers
@@ -424,7 +424,7 @@ triggerRef(list)       // force subscribers to re-run
 Deep reactive proxy of an object. All nested reads and writes are tracked automatically.
 
 ```ts
-import { reactive } from '@netrojs/fnetro/core'
+import { reactive } from 'fnetro/core'
 
 const state = reactive({
   user: { name: 'Alice', role: 'admin' },
@@ -448,7 +448,7 @@ const form = shallowReactive({ name: '', email: '' })
 A lazily-evaluated, cached derived value. Re-evaluates only when its dependencies change.
 
 ```ts
-import { ref, computed } from '@netrojs/fnetro/core'
+import { ref, computed } from 'fnetro/core'
 
 const firstName = ref('Alice')
 const lastName  = ref('Smith')
@@ -477,7 +477,7 @@ console.log(firstName.value)  // 'Bob'
 Runs a callback when a source changes. Not immediate by default.
 
 ```ts
-import { ref, watch } from '@netrojs/fnetro/core'
+import { ref, watch } from 'fnetro/core'
 
 const count = ref(0)
 
@@ -514,7 +514,7 @@ stop()
 Like `watch` but auto-tracks every reactive value read inside the function body. Runs immediately.
 
 ```ts
-import { ref, reactive, watchEffect } from '@netrojs/fnetro/core'
+import { ref, reactive, watchEffect } from 'fnetro/core'
 
 const user  = reactive({ name: 'Alice' })
 const theme = ref('dark')
@@ -537,7 +537,7 @@ stop()  // remove the effect
 Groups effects together so they can all be stopped at once. Useful for feature-level cleanup (e.g. when a modal closes, stop all effects created inside it).
 
 ```ts
-import { ref, watchEffect, effectScope, onScopeDispose } from '@netrojs/fnetro/core'
+import { ref, watchEffect, effectScope, onScopeDispose } from 'fnetro/core'
 
 const scope = effectScope()
 
@@ -569,7 +569,7 @@ import {
   markRaw,         // (object) → never proxied (e.g. third-party class instances)
   toRaw,           // (proxy) → the original unwrapped object
   readonly,        // (object) → readonly proxy — mutations warn in dev
-} from '@netrojs/fnetro/core'
+} from 'fnetro/core'
 
 // toRefs — destructure a reactive object without losing reactivity
 const pos = reactive({ x: 0, y: 0 })
@@ -591,7 +591,7 @@ These are the bridge between signals and JSX components. On the server they retu
 #### `use(source)` — subscribe to any Ref or getter
 
 ```tsx
-import { ref, computed, use } from '@netrojs/fnetro/core'
+import { ref, computed, use } from 'fnetro/core'
 
 // Module-level — shared across all components and page navigations
 const cartCount = ref(0)
@@ -609,7 +609,7 @@ function CartIcon() {
 #### `useLocalRef(init)` — component-scoped Ref
 
 ```tsx
-import { useLocalRef, use } from '@netrojs/fnetro/core'
+import { useLocalRef, use } from 'fnetro/core'
 
 function Toggle() {
   const open = useLocalRef(false)   // created once, lost on unmount
@@ -628,7 +628,7 @@ function Toggle() {
 #### `useLocalReactive(init)` — component-scoped reactive object
 
 ```tsx
-import { useLocalReactive } from '@netrojs/fnetro/core'
+import { useLocalReactive } from 'fnetro/core'
 
 function LoginForm() {
   const form = useLocalReactive({ email: '', password: '', loading: false })
@@ -721,7 +721,7 @@ const adminGroup = defineGroup({
 Assembles a Hono app from your route tree. Returns a `FNetroApp` with `.app` (the raw Hono instance) and `.handler` (the fetch function).
 
 ```ts
-import { createFNetro } from '@netrojs/fnetro/server'
+import { createFNetro } from 'fnetro/server'
 
 const fnetro = createFNetro({
   layout: RootLayout,
@@ -751,7 +751,7 @@ fnetro.app.use('/healthz', (c) => c.text('ok'))
 Starts the HTTP server. Auto-detects the runtime unless `runtime` is specified.
 
 ```ts
-import { serve } from '@netrojs/fnetro/server'
+import { serve } from 'fnetro/server'
 import { fnetro } from './app'
 
 // Auto-detect (works for Node, Bun, Deno)
@@ -781,7 +781,7 @@ export default { fetch: fnetro.handler }
 ### Runtime detection
 
 ```ts
-import { detectRuntime } from '@netrojs/fnetro/server'
+import { detectRuntime } from 'fnetro/server'
 
 const runtime = detectRuntime()
 // → 'bun' | 'deno' | 'node' | 'edge' | 'unknown'
@@ -799,7 +799,7 @@ Call once in `client.ts`. Reads `window.__FNETRO_STATE__` injected by the server
 
 ```ts
 // client.ts
-import { boot } from '@netrojs/fnetro/client'
+import { boot } from 'fnetro/client'
 import { RootLayout } from './app/layouts'
 import home from './app/routes/home'
 import posts from './app/routes/posts'
@@ -820,7 +820,7 @@ Routes in `boot()` must match the routes in `createFNetro()` exactly (same array
 Programmatic SPA navigation.
 
 ```ts
-import { navigate } from '@netrojs/fnetro/client'
+import { navigate } from 'fnetro/client'
 
 // Push a new history entry and navigate
 await navigate('/posts/new-post')
@@ -847,7 +847,7 @@ Plain `<a>` tags are intercepted automatically — no `<Link>` component require
 Warms the SPA fetch cache for a URL. By default called automatically on `mouseover`. Call manually for more aggressive prefetching (e.g. on `mousedown` or when an item enters the viewport).
 
 ```ts
-import { prefetch } from '@netrojs/fnetro/client'
+import { prefetch } from 'fnetro/client'
 
 // Prefetch on mousedown — faster than waiting for click
 button.addEventListener('mousedown', () => prefetch('/posts/next'))
@@ -867,7 +867,7 @@ boot({ prefetchOnHover: false, ... })
 ### Lifecycle hooks
 
 ```ts
-import { onBeforeNavigate, onAfterNavigate } from '@netrojs/fnetro/client'
+import { onBeforeNavigate, onAfterNavigate } from 'fnetro/client'
 
 // Runs before every SPA navigation — async, awaited
 // Throw any error to cancel the navigation
@@ -898,7 +898,7 @@ stopAfter()
 ```ts
 // vite.config.ts
 import { defineConfig } from 'vite'
-import { fnetroVitePlugin } from '@netrojs/fnetro/vite'
+import { fnetroVitePlugin } from 'fnetro/vite'
 import devServer from '@hono/vite-dev-server'
 import bunAdapter from '@hono/vite-dev-server/bun'
 
@@ -975,7 +975,7 @@ Module-level reactive state persists across SPA navigations because ES modules a
 
 ```ts
 // app/store.ts
-import { ref, reactive, computed, watch } from '@netrojs/fnetro/core'
+import { ref, reactive, computed, watch } from 'fnetro/core'
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 export const theme = ref<'dark' | 'light'>('dark')
@@ -1019,7 +1019,7 @@ export function removeFromCart(id: string) {
 Using the store in a layout or page:
 
 ```tsx
-import { use } from '@netrojs/fnetro/core'
+import { use } from 'fnetro/core'
 import { cartCount, isLoggedIn, user, theme } from '../store'
 
 function NavBar({ url }: { url: string }) {
@@ -1121,7 +1121,7 @@ await serve({ app: fnetro, port: 3000, runtime: 'bun' })
 
 ## API reference
 
-### `@netrojs/fnetro/core`
+### `fnetro/core`
 
 **Reactivity**
 
@@ -1168,7 +1168,7 @@ await serve({ app: fnetro, port: 3000, runtime: 'bun' })
 | `defineMiddleware(handler)` | Create a middleware |
 | `defineApiRoute(path, register)` | Mount raw Hono routes |
 
-### `@netrojs/fnetro/server`
+### `fnetro/server`
 
 | Symbol | Description |
 |---|---|
@@ -1177,7 +1177,7 @@ await serve({ app: fnetro, port: 3000, runtime: 'bun' })
 | `detectRuntime()` | Returns `'node' \| 'bun' \| 'deno' \| 'edge' \| 'unknown'` |
 | `fnetroVitePlugin(opts?)` | Vite plugin — produces server + client bundles |
 
-### `@netrojs/fnetro/client`
+### `fnetro/client`
 
 | Symbol | Description |
 |---|---|

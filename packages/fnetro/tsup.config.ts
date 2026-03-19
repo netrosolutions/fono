@@ -1,51 +1,50 @@
 import { defineConfig } from 'tsup'
 
+const external = [
+  'solid-js',
+  'solid-js/web',
+  'solid-js/store',
+  'solid-js/universal',
+  'hono',
+  /^hono\//,
+  'vite',
+  'vite-plugin-solid',
+  '@hono/node-server',
+  '@hono/node-server/serve-static',
+  /^node:/,
+]
+
 export default defineConfig([
-  // core — no Node/browser deps
+  // core — shared types and utilities, no runtime deps
   {
-    entry: { core: 'core.ts' },
+    entry:  { core: 'core.ts' },
     format: ['esm'],
-    dts: true,
-    clean: false,
+    dts:    true,
+    clean:  false,
     outDir: 'dist',
     target: 'es2022',
-    esbuildOptions(opts) {
-      opts.jsx = 'automatic'
-      opts.jsxImportSource = 'hono/jsx'
-    },
-    external: ['hono', 'hono/jsx', 'hono/jsx/dom', 'vite'],
+    external,
   },
-  // server — Hono + Vite plugin
+  // server — SSR renderer + Vite plugin (Node / server-side)
   {
-    entry: { server: 'server.ts' },
-    format: ['esm'],
-    dts: true,
-    clean: false,
-    outDir: 'dist',
-    target: 'es2022',
-    esbuildOptions(opts) {
-      opts.jsx = 'automatic'
-      opts.jsxImportSource = 'hono/jsx'
-    },
-    external: [
-      'hono', 'hono/jsx', 'hono/jsx/dom', 'hono/jsx/dom/server',
-      'vite', '@hono/node-server', '@hono/node-server/serve-static',
-      /^node:/,
-    ],
+    entry:    { server: 'server.ts' },
+    format:   ['esm'],
+    dts:      true,
+    clean:    false,
+    outDir:   'dist',
+    target:   'es2022',
+    platform: 'node',
+    external,
   },
-  // client — browser target
+  // client — browser SPA runtime
   {
-    entry: { client: 'client.ts' },
-    format: ['esm'],
-    dts: true,
-    clean: false,
-    outDir: 'dist',
-    target: 'es2022',
+    entry:    { client: 'client.ts' },
+    format:   ['esm'],
+    dts:      true,
+    clean:    false,
+    outDir:   'dist',
+    target:   'es2022',
     platform: 'browser',
-    esbuildOptions(opts) {
-      opts.jsx = 'automatic'
-      opts.jsxImportSource = 'hono/jsx'
-    },
-    external: ['hono', 'hono/jsx', 'hono/jsx/dom'],
+    external,
   },
 ])

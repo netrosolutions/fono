@@ -1,7 +1,7 @@
 {
-  "name": "@netrojs/fnetro",
-  "version": "0.1.6",
-  "description": "Full-stack Hono framework — SSR, SPA, Vue-like reactivity, route groups, middleware and API routes",
+  "name": "fnetro",
+  "version": "0.2.0",
+  "description": "Full-stack Hono framework — SolidJS SSR/SPA, SEO, middleware, route groups, API routes",
   "type": "module",
   "license": "MIT",
   "author": "Netro Solutions<info@netrosolutions.com>",
@@ -17,19 +17,21 @@
   "keywords": [
     "fnetro",
     "hono",
+    "solid",
+    "solidjs",
     "framework",
     "fullstack",
     "ssr",
     "spa",
-    "reactivity",
-    "signals",
+    "seo",
     "jsx",
     "tsx",
     "node",
     "bun",
     "deno",
     "cloudflare-workers",
-    "edge"
+    "edge",
+    "typescript"
   ],
   "exports": {
     ".": {
@@ -71,21 +73,28 @@
     "prepublishOnly": "npm run clean && npm run build && npm run typecheck"
   },
   "peerDependencies": {
+    "solid-js": ">=1.9.11",
     "hono": ">=4.0.0",
-    "vite": ">=5.0.0"
+    "vite": ">=5.0.0",
+    "vite-plugin-solid": ">=2.11.11"
   },
   "peerDependenciesMeta": {
     "vite": {
+      "optional": true
+    },
+    "vite-plugin-solid": {
       "optional": true
     }
   },
   "devDependencies": {
     "@hono/node-server": "^1.19.11",
-    "@types/node": "^25.5.0",
+    "@types/node": "^22.0.0",
     "hono": "^4.12.8",
     "rimraf": "^6.1.3",
+    "solid-js": "^1.9.11",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vite": "^8.0.0"
+    "vite": "^8.0.1",
+    "vite-plugin-solid": "^2.11.11"
   }
 }

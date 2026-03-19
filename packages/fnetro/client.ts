@@ -1,227 +1,203 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  FNetro · client.ts
-//  SPA runtime · hook patching · navigation · prefetch · lifecycle
+//  SolidJS hydration · SPA routing · client middleware · SEO sync · prefetch
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { render } from 'hono/jsx/dom'
-import { jsx } from 'hono/jsx'
+import { createSignal, createMemo, createComponent } from 'solid-js'
+import { hydrate } from 'solid-js/web'
 import {
-  useState, useEffect, useMemo, useRef as useHonoRef,
-  useSyncExternalStore,
-} from 'hono/jsx'
-import {
-  __hooks, ref, reactive, computed, watchEffect, isRef,
-  SPA_HEADER, STATE_KEY, PARAMS_KEY,
-  type Ref, type AppConfig, type ResolvedRoute,
-  type LayoutDef,
+  resolveRoutes, compilePath, matchPath,
+  SPA_HEADER, STATE_KEY, PARAMS_KEY, SEO_KEY,
+  type AppConfig, type ResolvedRoute, type CompiledPath,
+  type LayoutDef, type SEOMeta, type ClientMiddleware,
 } from './core'
-import { resolveRoutes } from './core'
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 1  Patch reactivity hooks for hono/jsx/dom
+//  § 1  Compiled route cache (module-level, populated on boot)
 // ══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Connect a Ref (or computed getter) to the current JSX component.
- * Re-renders whenever the source changes.
- */
-function clientUseValue<T>(source: Ref<T> | (() => T)): T {
-  if (isRef(source)) {
-    // Fast path: useSyncExternalStore is ideal for refs
-    return useSyncExternalStore(
-      (notify) => (source as any).subscribe(notify),
-      () => (source as any).peek?.() ?? source.value,
-    )
-  }
-  // Getter: wrap in a computed ref, then subscribe
-  const c = useMemo(() => computed(source as () => T), [source])
-  return useSyncExternalStore(
-    (notify) => (c as any).subscribe(notify),
-    () => (c as any).peek?.() ?? c.value,
-  )
-}
+interface CRoute { route: ResolvedRoute; cp: CompiledPath }
 
-/**
- * Component-local Ref — stable across re-renders, lost on unmount.
- */
-function clientUseLocalRef<T>(init: T): Ref<T> {
-  // Create the ref once (stable ref object via hono's useRef)
-  const stableRef = useHonoRef<Ref<T> | null>(null)
-  if (stableRef.current === null) stableRef.current = ref(init)
-  const r = stableRef.current!
-  // Subscribe so mutations trigger re-render
-  useSyncExternalStore(
-    (notify) => (r as any).subscribe(notify),
-    () => (r as any).peek?.() ?? r.value,
-  )
-  return r
-}
+let _routes:    CRoute[]          = []
+let _appLayout: LayoutDef | undefined
 
-/**
- * Component-local reactive object — deep proxy, re-renders on any mutation.
- */
-function clientUseLocalReactive<T extends object>(init: T): T {
-  const stableRef = useHonoRef<T | null>(null)
-  if (stableRef.current === null) stableRef.current = reactive(init)
-  const proxy = stableRef.current!
-
-  // watchEffect to re-render whenever any tracked key changes
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    return watchEffect(() => {
-      // Touch all keys to establish tracking
-      JSON.stringify(proxy)
-      // Schedule re-render (not on first run)
-      setTick(t => t + 1)
-    })
-  }, [])
-
-  return proxy
-}
-
-// Patch the module-level hook table
-Object.assign(__hooks, {
-  useValue: clientUseValue,
-  useLocalRef: clientUseLocalRef,
-  useLocalReactive: clientUseLocalReactive,
-})
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  § 2  Path matching (mirrors server)
-// ══════════════════════════════════════════════════════════════════════════════
-
-interface CompiledRoute {
-  route: ResolvedRoute
-  re: RegExp
-  keys: string[]
-}
-
-function compileRoute(r: ResolvedRoute): CompiledRoute {
-  const keys: string[] = []
-  const src = r.fullPath
-    .replace(/\[\.\.\.([^\]]+)\]/g, (_: string, k: string) => { keys.push(k); return '(.*)' })
-    .replace(/\[([^\]]+)\]/g, (_: string, k: string) => { keys.push(k); return '([^/]+)' })
-    .replace(/\*/g, '(.*)')
-  return { route: r, re: new RegExp(`^${src}$`), keys }
-}
-
-function matchRoute(compiled: CompiledRoute[], pathname: string) {
-  for (const c of compiled) {
-    const m = pathname.match(c.re)
-    if (m) {
-      const params: Record<string, string> = {}
-      c.keys.forEach((k, i) => { params[k] = decodeURIComponent(m[i + 1]) })
-      return { route: c.route, params }
-    }
+function findRoute(pathname: string) {
+  for (const { route, cp } of _routes) {
+    const params = matchPath(cp, pathname)
+    if (params !== null) return { route, params }
   }
   return null
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 3  Navigation lifecycle hooks
+//  § 2  Navigation state signal
 // ══════════════════════════════════════════════════════════════════════════════
 
-type NavListener = (url: string) => void | Promise<void>
-const beforeNavListeners: NavListener[] = []
-const afterNavListeners: NavListener[] = []
-
-/** Called before each SPA navigation. Returning false cancels. */
-export function onBeforeNavigate(fn: NavListener): () => void {
-  beforeNavListeners.push(fn)
-  return () => beforeNavListeners.splice(beforeNavListeners.indexOf(fn), 1)
-}
-
-/** Called after each SPA navigation (including initial boot). */
-export function onAfterNavigate(fn: NavListener): () => void {
-  afterNavListeners.push(fn)
-  return () => afterNavListeners.splice(afterNavListeners.indexOf(fn), 1)
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  § 4  SPA navigation
-// ══════════════════════════════════════════════════════════════════════════════
-
-let compiled: CompiledRoute[] = []
-let currentConfig: AppConfig
-let currentLayout: LayoutDef | undefined
-const prefetchCache = new Map<string, Promise<any>>()
-
-function fetchPage(url: string): Promise<any> {
-  if (!prefetchCache.has(url)) {
-    prefetchCache.set(url, fetch(url, {
-      headers: { [SPA_HEADER]: '1' }
-    }).then(r => r.json()))
-  }
-  return prefetchCache.get(url)!
-}
-
-async function renderPage(
-  route: ResolvedRoute,
-  data: object,
-  url: string,
+interface NavState {
+  path:   string
+  data:   Record<string, unknown>
   params: Record<string, string>
-) {
-  const container = document.getElementById('fnetro-app')!
-  const pageNode = (jsx as any)(route.page.Page, { ...data, url, params })
-  const layout = route.layout !== undefined ? route.layout : currentLayout
-  const tree = layout
-    ? (jsx as any)(layout.Component, { url, params, children: pageNode })
-    : pageNode
-  render(tree, container)
 }
+
+// Populated by createAppRoot(); exposed so navigate() can update it.
+let _setNav: ((s: NavState) => void) | null = null
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 3  Client middleware
+// ══════════════════════════════════════════════════════════════════════════════
+
+const _mw: ClientMiddleware[] = []
+
+/**
+ * Register a client-side navigation middleware.
+ * Must be called **before** `boot()`.
+ *
+ * @example
+ * useClientMiddleware(async (url, next) => {
+ *   if (!isLoggedIn() && url.startsWith('/dashboard')) {
+ *     await navigate('/login')
+ *     return                   // cancel original navigation
+ *   }
+ *   await next()
+ * })
+ */
+export function useClientMiddleware(mw: ClientMiddleware): void {
+  _mw.push(mw)
+}
+
+async function runMiddleware(url: string, done: () => Promise<void>): Promise<void> {
+  const chain = [..._mw, async (_u: string, next: () => Promise<void>) => { await done(); await next() }]
+  let i = 0
+  const run = async (): Promise<void> => {
+    const fn = chain[i++]
+    if (fn) await fn(url, run)
+  }
+  await run()
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 4  SEO — client-side <head> sync
+// ══════════════════════════════════════════════════════════════════════════════
+
+function setMeta(selector: string, attr: string, val: string | undefined): void {
+  if (!val) { document.querySelector(selector)?.remove(); return }
+  let el = document.querySelector<HTMLMetaElement>(selector)
+  if (!el) {
+    el = document.createElement('meta')
+    const m = /\[(\w+[:-]?\w*)="([^"]+)"\]/.exec(selector)
+    if (m) el.setAttribute(m[1], m[2])
+    document.head.appendChild(el)
+  }
+  el.setAttribute(attr, val)
+}
+
+function syncSEO(seo: SEOMeta): void {
+  if (seo.title) document.title = seo.title
+
+  setMeta('[name="description"]',        'content', seo.description)
+  setMeta('[name="keywords"]',           'content', seo.keywords)
+  setMeta('[name="robots"]',             'content', seo.robots)
+  setMeta('[name="theme-color"]',        'content', seo.themeColor)
+  setMeta('[property="og:title"]',       'content', seo.ogTitle)
+  setMeta('[property="og:description"]', 'content', seo.ogDescription)
+  setMeta('[property="og:image"]',       'content', seo.ogImage)
+  setMeta('[property="og:url"]',         'content', seo.ogUrl)
+  setMeta('[property="og:type"]',        'content', seo.ogType)
+  setMeta('[name="twitter:card"]',       'content', seo.twitterCard)
+  setMeta('[name="twitter:title"]',      'content', seo.twitterTitle)
+  setMeta('[name="twitter:description"]','content', seo.twitterDescription)
+  setMeta('[name="twitter:image"]',      'content', seo.twitterImage)
+
+  // Canonical link
+  const canon = seo.canonical
+  let linkEl = document.querySelector<HTMLLinkElement>('link[rel="canonical"]')
+  if (canon) {
+    if (!linkEl) {
+      linkEl = document.createElement('link')
+      linkEl.rel = 'canonical'
+      document.head.appendChild(linkEl)
+    }
+    linkEl.href = canon
+  } else {
+    linkEl?.remove()
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 5  Prefetch cache
+// ══════════════════════════════════════════════════════════════════════════════
+
+interface NavPayload {
+  state:  Record<string, unknown>
+  params: Record<string, string>
+  seo:    SEOMeta
+  url:    string
+}
+
+const _cache = new Map<string, Promise<NavPayload>>()
+
+function fetchPayload(href: string): Promise<NavPayload> {
+  if (!_cache.has(href)) {
+    _cache.set(
+      href,
+      fetch(href, { headers: { [SPA_HEADER]: '1' } })
+        .then(r => {
+          if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+          return r.json() as Promise<NavPayload>
+        }),
+    )
+  }
+  return _cache.get(href)!
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 6  navigate / prefetch
+// ══════════════════════════════════════════════════════════════════════════════
 
 export interface NavigateOptions {
   replace?: boolean
-  scroll?: boolean
+  scroll?:  boolean
 }
 
-export async function navigate(
-  to: string,
-  opts: NavigateOptions = {}
-): Promise<void> {
+export async function navigate(to: string, opts: NavigateOptions = {}): Promise<void> {
   const u = new URL(to, location.origin)
   if (u.origin !== location.origin) { location.href = to; return }
+  if (!findRoute(u.pathname))        { location.href = to; return }
 
-  // Run before-nav hooks
-  for (const fn of beforeNavListeners) await fn(u.pathname)
+  await runMiddleware(u.pathname, async () => {
+    try {
+      const payload = await fetchPayload(u.toString())
+      history[opts.replace ? 'replaceState' : 'pushState'](
+        { url: u.pathname }, '', u.pathname,
+      )
+      if (opts.scroll !== false) window.scrollTo(0, 0)
 
-  const match = matchRoute(compiled, u.pathname)
-  if (!match) { location.href = to; return }
-
-  try {
-    const payload = await fetchPage(u.toString())
-    const method = opts.replace ? 'replaceState' : 'pushState'
-    history[method]({ url: u.pathname }, '', u.pathname)
-    if (opts.scroll !== false) window.scrollTo(0, 0)
-    await renderPage(match.route, payload.state ?? {}, u.pathname, payload.params ?? {})
-    // Cache state for popstate
-    ;(window as any)[STATE_KEY] = {
-      ...(window as any)[STATE_KEY],
-      [u.pathname]: payload.state ?? {}
+      _setNav?.({ path: u.pathname, data: payload.state ?? {}, params: payload.params ?? {} })
+      syncSEO(payload.seo ?? {})
+    } catch (err) {
+      console.error('[fnetro] Navigation error:', err)
+      location.href = to
     }
-    for (const fn of afterNavListeners) await fn(u.pathname)
-  } catch (e) {
-    console.error('[fnetro] Navigation failed:', e)
-    location.href = to
-  }
+  })
 }
 
-/** Warm the prefetch cache for a URL (call on hover / mousedown). */
+/** Warm the prefetch cache for a URL on hover/focus/etc. */
 export function prefetch(url: string): void {
-  const u = new URL(url, location.origin)
-  if (u.origin !== location.origin) return
-  if (!matchRoute(compiled, u.pathname)) return
-  fetchPage(u.toString())
+  try {
+    const u = new URL(url, location.origin)
+    if (u.origin !== location.origin || !findRoute(u.pathname)) return
+    fetchPayload(u.toString())
+  } catch { /* ignore invalid URLs */ }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 5  Click interceptor + popstate
+//  § 7  DOM event intercepts
 // ══════════════════════════════════════════════════════════════════════════════
 
-function interceptClicks(e: MouseEvent) {
+function onLinkClick(e: MouseEvent): void {
   if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
   const a = e.composedPath().find(
-    (el): el is HTMLAnchorElement => el instanceof HTMLAnchorElement
+    (el): el is HTMLAnchorElement => el instanceof HTMLAnchorElement,
   )
   if (!a?.href) return
   if (a.target && a.target !== '_self') return
@@ -232,76 +208,120 @@ function interceptClicks(e: MouseEvent) {
   navigate(a.href)
 }
 
-function interceptHover(e: MouseEvent) {
+function onLinkHover(e: MouseEvent): void {
   const a = e.composedPath().find(
-    (el): el is HTMLAnchorElement => el instanceof HTMLAnchorElement
+    (el): el is HTMLAnchorElement => el instanceof HTMLAnchorElement,
   )
   if (a?.href) prefetch(a.href)
 }
 
-function onPopState() {
+function onPopState(): void {
   navigate(location.href, { replace: true, scroll: false })
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 6  boot()
+//  § 8  App root component (created inside hydrate's reactive owner)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function AppRoot(props: { initial: NavState; appLayout: LayoutDef | undefined }): any {
+  const [nav, setNav] = createSignal<NavState>(props.initial)
+  // Expose setter so navigate() can trigger re-renders
+  _setNav = setNav
+
+  const view = createMemo(() => {
+    const { path, data, params } = nav()
+    const m = findRoute(path)
+
+    if (!m) {
+      // No match client-side — shouldn't happen but handle gracefully
+      return null as any
+    }
+
+    const layout = m.route.layout !== undefined ? m.route.layout : props.appLayout
+    const pageEl = createComponent(m.route.page.Page as any, { ...data, url: path, params })
+
+    if (!layout) return pageEl
+
+    return createComponent(layout.Component as any, {
+      url: path,
+      params,
+      get children() { return pageEl },
+    })
+  })
+
+  return view
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  § 9  boot()
 // ══════════════════════════════════════════════════════════════════════════════
 
 export interface BootOptions extends AppConfig {
-  /**
-   * Enable hover-based prefetching (default: true).
-   * Fires a SPA fetch when the user hovers any <a> that matches a route.
-   */
+  /** Enable hover-based prefetching.  @default true */
   prefetchOnHover?: boolean
 }
 
 export async function boot(options: BootOptions): Promise<void> {
   const { pages } = resolveRoutes(options.routes, {
-    layout: options.layout,
+    layout:     options.layout,
     middleware: [],
   })
 
-  compiled = pages.map(compileRoute)
-  currentConfig = options
-  currentLayout = options.layout
+  _routes    = pages.map(r => ({ route: r, cp: compilePath(r.fullPath) }))
+  _appLayout = options.layout
 
   const pathname = location.pathname
-  const match = matchRoute(compiled, pathname)
-
-  if (!match) {
-    console.warn(`[fnetro] No route matched "${pathname}" — not hydrating`)
+  if (!findRoute(pathname)) {
+    console.warn(`[fnetro] No route matched "${pathname}" — skipping hydration`)
     return
   }
 
-  // Read server-injected state (no refetch!)
-  const stateMap: Record<string, object> = (window as any)[STATE_KEY] ?? {}
-  const paramsMap: Record<string, string> = (window as any)[PARAMS_KEY] ?? {}
-  const data = stateMap[pathname] ?? {}
+  // Server-injected initial state (no refetch needed on first load)
+  const stateMap  = (window as any)[STATE_KEY]  as Record<string, Record<string, unknown>> ?? {}
+  const paramsMap = (window as any)[PARAMS_KEY] as Record<string, string>                  ?? {}
+  const seoData   = (window as any)[SEO_KEY]    as SEOMeta                                 ?? {}
 
-  await renderPage(match.route, data, pathname, paramsMap)
+  const initial: NavState = {
+    path:   pathname,
+    data:   stateMap[pathname] ?? {},
+    params: paramsMap,
+  }
 
-  // Wire up navigation
-  document.addEventListener('click', interceptClicks)
+  const container = document.getElementById('fnetro-app')
+  if (!container) {
+    console.error('[fnetro] #fnetro-app not found — aborting hydration')
+    return
+  }
+
+  // Sync initial SEO (document.title etc.)
+  syncSEO(seoData)
+
+  // Hydrate the server-rendered HTML with SolidJS
+  hydrate(
+    () => createComponent(AppRoot as any, { initial, appLayout: _appLayout }) as any,
+    container,
+  )
+
+  // Wire up SPA navigation
+  document.addEventListener('click', onLinkClick)
   if (options.prefetchOnHover !== false) {
-    document.addEventListener('mouseover', interceptHover)
+    document.addEventListener('mouseover', onLinkHover)
   }
   window.addEventListener('popstate', onPopState)
-
-  for (const fn of afterNavListeners) await fn(pathname)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  § 7  Re-export core for client code that imports only client.ts
+//  § 10  Re-exports
 // ══════════════════════════════════════════════════════════════════════════════
+
 export {
-  ref, shallowRef, reactive, shallowReactive, readonly,
-  computed, effect, watch, watchEffect, effectScope,
-  toRef, toRefs, unref, isRef, isReactive, isReadonly, markRaw, toRaw,
-  triggerRef, use, useLocalRef, useLocalReactive,
-  definePage, defineGroup, defineLayout, defineMiddleware, defineApiRoute,
+  definePage, defineGroup, defineLayout, defineApiRoute,
+  resolveRoutes, compilePath, matchPath,
+  SPA_HEADER, STATE_KEY, PARAMS_KEY, SEO_KEY,
 } from './core'
+
 export type {
-  Ref, ComputedRef, WritableComputedRef,
-  AppConfig, PageDef, GroupDef, LayoutDef, ApiRouteDef,
-  WatchSource, WatchOptions,
+  AppConfig, PageDef, GroupDef, LayoutDef, ApiRouteDef, Route,
+  PageProps, LayoutProps, SEOMeta, HonoMiddleware, LoaderCtx,
+  ResolvedRoute, CompiledPath, ClientMiddleware,
 } from './core'
