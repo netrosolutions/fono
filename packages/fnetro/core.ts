@@ -111,7 +111,11 @@ export function resolveRoutes(
       const prefix = (options.prefix ?? '') + route.prefix
       const mw     = [...(options.middleware ?? []), ...(route.middleware ?? [])]
       const layout = route.layout !== undefined ? route.layout : options.layout
-      const sub    = resolveRoutes(route.routes, { prefix, middleware: mw, layout })
+      const sub    = resolveRoutes(route.routes, {
+        prefix,
+        middleware: mw,
+        ...(layout !== undefined && { layout }),
+      })
       pages.push(...sub.pages)
       apis.push(...sub.apis)
     } else {

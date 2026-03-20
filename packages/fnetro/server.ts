@@ -13,7 +13,7 @@ import {
   SPA_HEADER, STATE_KEY, PARAMS_KEY, SEO_KEY, DATA_KEY,
   type AppConfig, type ResolvedRoute, type LayoutDef, type SEOMeta,
 } from './core'
-import type { Plugin, InlineConfig, UserConfig } from 'vite'
+import { build, type Plugin, type InlineConfig, type UserConfig } from 'vite'
 
 // ── HTML helpers ──────────────────────────────────────────────────────────────
 
@@ -280,7 +280,7 @@ export function createFNetro(config: FNetroOptions): FNetroApp {
   for (const mw of config.middleware ?? []) app.use('*', mw)
 
   const { pages, apis } = resolveRoutes(config.routes, {
-    layout:     config.layout,
+    ...(config.layout !== undefined && { layout: config.layout }),
     middleware: [],
   })
 
@@ -526,10 +526,13 @@ export function fnetroVitePlugin(opts: FNetroPluginOptions = {}): Plugin {
         )
       }
 
-      const { build } = await import('vite')
-      await (build as (c: InlineConfig) => Promise<unknown>)({
-        configFile: false,
-        plugins:    (Array.isArray(vuePlugin) ? vuePlugin : [vuePlugin]) as InlineConfig['plugins'],
+      const plugins = (
+        Array.isArray(vuePlugin) ? vuePlugin : [vuePlugin]
+      ) as NonNullable<InlineConfig['plugins']>
+
+      await build({
+        configFile: false as const,
+        plugins,
         build: {
           outDir:   clientOutDir,
           // Vite 5+ writes manifest to <outDir>/.vite/manifest.json

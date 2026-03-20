@@ -43,8 +43,9 @@ function setMeta(selector: string, attr: string, val?: string): void {
   let el = document.querySelector<HTMLMetaElement>(selector)
   if (!el) {
     el = document.createElement('meta')
-    const m = /\[([^=]+)="([^"]+)"\]/.exec(selector)
-    if (m) el.setAttribute(m[1], m[2])
+    // Destructuring with defaults avoids string|undefined from noUncheckedIndexedAccess
+    const [, attrName = '', attrVal = ''] = /\[([^=]+)="([^"]+)"\]/.exec(selector) ?? []
+    if (attrName) el.setAttribute(attrName, attrVal)
     document.head.appendChild(el)
   }
   el.setAttribute(attr, val)
@@ -195,7 +196,7 @@ export async function boot(options: BootOptions): Promise<void> {
   }
 
   const { pages } = resolveRoutes(options.routes, {
-    layout:     options.layout,
+    ...(options.layout !== undefined && { layout: options.layout }),
     middleware: [],
   })
 
