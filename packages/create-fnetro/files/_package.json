@@ -6,7 +6,7 @@
   "scripts": {
     "dev":       "{{DEV_CMD}}",
     "build":     "{{BUILD_CMD}}",
-    "start":     "node dist/server/server.js",
+    "start":     "{{START_CMD}}",
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
